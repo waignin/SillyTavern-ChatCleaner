@@ -11,6 +11,7 @@ async function loadManifestVersion() {
             const data = await res.json();
             if (data && data.version) {
                 appVersion = String(data.version).trim();
+                console.log('[ChatCleaner] manifest loaded:', appVersion);
                 updateAppTitleUI();
             }
         }
@@ -20,8 +21,10 @@ async function loadManifestVersion() {
 }
 
 function updateAppTitleUI() {
+    const $title = $('#cmp-app-title');
+    if (!$title.length) return;
     const title = t('appTitle', { version: appVersion });
-    $('#cmp-app-title').text(title);
+    $title.text(title);
 }
 
 // 自动识别 SillyTavern 多用户标识，实现多账号数据隔离（单用户模式下平滑兼容）
@@ -405,7 +408,7 @@ const State = {
     previewLoading: false,
     selectedAvatar: null,        // 侧栏当前选中的角色 avatar；null = 全部
     statusFilter: null,          // 'checkpoint' | 'corrupted_large' | 'backup' | null
-    activeDashboardKey: null     // 'zombie' | 'checkpoint' | 'corrupt' | 'chars' | null
+    activeDashboardKey: null     // 'zombie' | 'checkpoint' | 'corrupt' | null
 };
 
 function saveSettings(cfg) {
@@ -1223,6 +1226,7 @@ function isMobileView() {
 function toggleSidebar(forceState = null) {
     const $sb = $('#cmp-sidebar');
     const $backdrop = $('#cmp-sidebar-backdrop');
+    console.log('[ChatCleaner] toggleSidebar', { forceState, isMobile: isMobileView(), sbLen: $sb.length, backdropLen: $backdrop.length });
     if (!$sb.length) return;
 
     if (isMobileView()) {
@@ -1230,10 +1234,22 @@ function toggleSidebar(forceState = null) {
         $sb.toggleClass('open', shouldOpen);
         $backdrop.toggleClass('open', shouldOpen);
     } else {
-        const shouldCollapse = forceState !== null ? !forceState : !$sb.hasClass('cmp-sidebar-collapsed');
+        const wasCollapsed = $sb.hasClass('cmp-sidebar-collapsed');
+        const shouldCollapse = forceState !== null ? !forceState : !wasCollapsed;
         $sb.toggleClass('cmp-sidebar-collapsed', shouldCollapse);
         State.sidebarCollapsedDesktop = shouldCollapse;
         updateToggleCharsBtn();
+        // 若桌面端点击「角色」展开侧栏，或侧栏本就处于展开状态，给侧栏脉冲高亮并聚焦搜索框以提供明确视觉反馈
+        if (!shouldCollapse) {
+            const $list = $sb.find('.cmp-sidebar-list');
+            if ($list.length) $list.scrollTop(0);
+            $sb.removeClass('cmp-sidebar-pulse');
+            void $sb[0].offsetWidth;
+            $sb.addClass('cmp-sidebar-pulse');
+            setTimeout(() => $sb.removeClass('cmp-sidebar-pulse'), 650);
+            const $search = $('#cmp-sidebar-search');
+            if ($search.length) $search.trigger('focus');
+        }
     }
 }
 
@@ -1298,11 +1314,12 @@ function renderDashboard() {
     }
     const active = State.activeDashboardKey;
     const cls = (k) => `cmp-dash-item${active === k ? ' cmp-dash-active' : ''}`;
-    const charsCls = `cmp-dash-item${State.selectedAvatar || active === 'chars' ? ' cmp-dash-active' : ''}`;
+    const charsCls = `cmp-dash-item${State.selectedAvatar ? ' cmp-dash-active' : ''}`;
+    const selCharSuffix = State.selectedAvatar ? (isEn() ? ' (Filtered)' : ' (已选)') : '';
     $dash.html(`
         <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashTotal'))}</span><span class="cmp-dash-value">${s.total}</span></div>
         <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashSize'))}</span><span class="cmp-dash-value">${formatSize(s.totalKB)}</span></div>
-        <div class="${charsCls}" data-dash="chars" title="${escapeHtml(t('sidebarTitle'))}"><span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span><span class="cmp-dash-value">${s.chars}${State.selectedAvatar ? ' (已选)' : ''}</span></div>
+        <div class="${charsCls}" data-dash="chars" title="${escapeHtml(t('sidebarTitle'))}"><span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span><span class="cmp-dash-value" id="cmp-dash-chars-val" data-count="${s.chars}">${s.chars}${selCharSuffix}</span></div>
         <div class="${cls('zombie')}" data-dash="zombie"><span class="cmp-dash-label">${escapeHtml(t('dashZombie'))}</span><span class="cmp-dash-value">${s.zombieCount}</span></div>
         <div class="${cls('checkpoint')}" data-dash="checkpoint"><span class="cmp-dash-label">${escapeHtml(t('dashBranch'))}</span><span class="cmp-dash-value">${s.branchCount}</span></div>
         <div class="${cls('corrupt')}" data-dash="corrupt"><span class="cmp-dash-label">${escapeHtml(t('dashCorrupt'))}</span><span class="cmp-dash-value">${s.corruptCount}</span></div>
@@ -1318,7 +1335,16 @@ function updateDashboardActive() {
     if (State.activeDashboardKey) {
         $dash.find(`.cmp-dash-item[data-dash="${State.activeDashboardKey}"]`).addClass('cmp-dash-active');
     }
-    const hasActive = Boolean(State.activeDashboardKey);
+    if (State.selectedAvatar) {
+        $dash.find('.cmp-dash-item[data-dash="chars"]').addClass('cmp-dash-active');
+    }
+    const $charsVal = $('#cmp-dash-chars-val');
+    if ($charsVal.length) {
+        const baseCount = $charsVal.attr('data-count') || '';
+        const selCharSuffix = State.selectedAvatar ? (isEn() ? ' (Filtered)' : ' (已选)') : '';
+        $charsVal.text(`${baseCount}${selCharSuffix}`);
+    }
+    const hasActive = Boolean(State.activeDashboardKey || State.selectedAvatar);
     if (hasActive && !$('#cmp-dash-clear').length) {
         $dash.append(`<button class="cmp-btn cmp-btn-xs" id="cmp-dash-clear">${escapeHtml(t('dashClearFilter'))}</button>`);
     } else if (!hasActive) {
@@ -1411,7 +1437,12 @@ function activateDashboardFilter(key) {
         return;
     }
     if (key === 'chars') {
-        toggleSidebar(true);
+        console.log('[ChatCleaner] chars clicked, isMobile:', isMobileView());
+        if (isMobileView()) {
+            toggleSidebar();
+        } else {
+            toggleSidebar(true);
+        }
         return;
     }
     if (State.activeDashboardKey === key) {
@@ -1626,6 +1657,11 @@ async function openLightweightPreview(recordId) {
                         dbPut(STORE_CACHE, cached);
                     }
                 }
+                const sortBy = $('#cmp-sort-select').val() || '';
+                const minDays = Number($('#cmp-min-days').val()) || 0;
+                if (sortBy === 'time_desc' || sortBy === 'time_asc' || minDays > 0) {
+                    applyFiltersAndRender(false);
+                }
             }).catch(() => {});
         }
 
@@ -1662,19 +1698,21 @@ async function openLightweightPreview(recordId) {
 
             let html = `
                 <div class="cmp-preview-toolbar">
-                    <div style="font-size:0.84em; color:var(--cmp-text-sub) !important; word-break:break-all;">
-                        ${isEn()
-                            ? `Total <b>${messages.length}</b> floors | Size <b>${formatSize(rec.sizeKB)}</b>`
-                            : `共 <b>${messages.length}</b> 楼 | 大小 <b>${formatSize(rec.sizeKB)}</b>`}
+                    <div class="cmp-preview-toolbar-top">
+                        <div style="font-size:0.84em; color:var(--cmp-text-sub) !important; word-break:break-all;">
+                            ${isEn()
+                                ? `Total <b>${messages.length}</b> floors | Size <b>${formatSize(rec.sizeKB)}</b>`
+                                : `共 <b>${messages.length}</b> 楼 | 大小 <b>${formatSize(rec.sizeKB)}</b>`}
+                        </div>
+                        <div style="display:flex; gap:5px; flex-wrap:wrap;">
+                            <button id="cmp-pv-expand-all" class="cmp-btn cmp-btn-xs">${isEn() ? 'Expand All' : '全部展开'}</button>
+                            <button id="cmp-pv-collapse-all" class="cmp-btn cmp-btn-xs">${isEn() ? 'Collapse All' : '全部折叠'}</button>
+                            <button id="cmp-pv-jump-top" class="cmp-btn cmp-btn-xs">${isEn() ? '↑ First' : '↑ 第一楼'}</button>
+                            <button id="cmp-pv-jump-bottom" class="cmp-btn cmp-btn-xs cmp-btn-primary">${isEn() ? '↓ Last' : '↓ 最后一楼'}</button>
+                        </div>
                     </div>
-                    <div style="display:flex; gap:5px; flex-wrap:wrap;">
-                        <button id="cmp-pv-expand-all" class="cmp-btn cmp-btn-xs">${isEn() ? 'Expand All' : '全部展开'}</button>
-                        <button id="cmp-pv-collapse-all" class="cmp-btn cmp-btn-xs">${isEn() ? 'Collapse All' : '全部折叠'}</button>
-                        <button id="cmp-pv-jump-top" class="cmp-btn cmp-btn-xs">${isEn() ? '↑ First' : '↑ 第一楼'}</button>
-                        <button id="cmp-pv-jump-bottom" class="cmp-btn cmp-btn-xs cmp-btn-primary">${isEn() ? '↓ Last' : '↓ 最后一楼'}</button>
-                    </div>
+                    ${metaBar}
                 </div>
-                ${metaBar}
                 <div class="cmp-preview-list">
             `;
 
@@ -3088,6 +3126,16 @@ function bindModalEvents() {
         }
     });
     $modal.on('click', '#cmp-sidebar-backdrop', function () {
+        closeSidebarDrawer();
+    });
+    // 移动端抽屉打开时，点击抽屉与触发按钮以外的任意弹窗区域自动收起抽屉
+    $modal.on('click', function (e) {
+        if (!isMobileView()) return;
+        const $sb = $('#cmp-sidebar');
+        if (!$sb.hasClass('open')) return;
+        if ($(e.target).closest('#cmp-sidebar, #cmp-toggle-chars-btn, .cmp-dash-item[data-dash="chars"]').length) {
+            return;
+        }
         closeSidebarDrawer();
     });
     $('#cmp-toggle-chars-btn').on('click', function (e) {
