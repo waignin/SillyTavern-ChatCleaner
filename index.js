@@ -1,22 +1,40 @@
 import { characters, this_chid, getRequestHeaders } from '../../../../script.js';
 
-const DB_NAME = 'SillyTavern_ChatCleaner_DB_V1';
+// 自动识别 SillyTavern 多用户标识，实现多账号数据隔离（单用户模式下平滑兼容）
+function getUserScopeKey() {
+    try {
+        const handle = window.currentUser?.handle || window.power_user?.handle || document.body?.dataset?.userHandle || 'default';
+        return String(handle).replace(/[^a-zA-Z0-9_-]/g, '_');
+    } catch {
+        return 'default';
+    }
+}
+
+const USER_SCOPE = getUserScopeKey();
+const DB_NAME = USER_SCOPE === 'default'
+    ? 'SillyTavern_ChatCleaner_DB_V1'
+    : `SillyTavern_ChatCleaner_${USER_SCOPE}_DB_V1`;
 const DB_VERSION = 1;
 const STORE_CACHE = 'scan_cache';         // 角色聊天列表缓存
 const STORE_TRASH_META = 'trash_meta';    // 回收站轻量元数据
 const STORE_TRASH_DATA = 'trash_payload'; // 回收站聊天正文数据
 
-const SETTINGS_KEY = 'cmp_settings_v1';
-const DISCLAIMER_KEY = 'cmp_disclaimer_v1';
+const SETTINGS_KEY = USER_SCOPE === 'default' ? 'cmp_settings_v1' : `cmp_settings_v1_${USER_SCOPE}`;
+const DISCLAIMER_KEY = USER_SCOPE === 'default' ? 'cmp_disclaimer_v1' : `cmp_disclaimer_v1_${USER_SCOPE}`;
+
+const MIN_RETENTION_MINS = 5;       // 最小保留时间：5 分钟（低于此值按 5 分钟计）
+const MAX_RETENTION_MINS = 10080;   // 最大常规时间：10080 分钟（7天），超过此值则永不自动清理
 
 const DEFAULT_SETTINGS = {
-    lang: 'zh',                // 默认中文 ('zh' | 'en')
+    lang: 'zh',                     // 默认中文 ('zh' | 'en')
     theme: 'dark',
     fontSize: 14,
     safeBackupMode: true,
+    trashRetentionMins: 60,         // 回收站保留分钟数 (5~10080，>10080 表示永不自动清理)
     verifyBeforeDelete: true,
-    largeZombieWarn: true,     // 异常大体积少消息警告开关
-    largeZombieSizeKB: 15,     // 触发异常大体积警告的阈值 (KB)
+    largeZombieWarn: true,          // 异常大体积少消息警告开关
+    largeZombieSizeKB: 15,          // 触发异常大体积警告的阈值 (KB)
+    protectBranches: true,          // 保护分支/书签及父聊天（全选时默认跳过）
     concurrency: 8
 };
 
@@ -33,7 +51,8 @@ const I18N = {
         resetUiTip: '仅恢复默认深色配色与14px标准字号，不影响安全设置',
         closeBtn: '✕ 关闭',
         tabManager: '聊天列表',
-        tabTrash: '回收站 (60分钟)',
+        tabTrash: '回收站 ({time})',
+        tabTrashNever: '永久保留',
         tabSettings: '设置',
         statusReady: '就绪',
         pauseBtn: '暂停',
@@ -90,6 +109,7 @@ const I18N = {
         btnUnlock: '解锁',
         btnDestroy: '销毁',
         tagLocked: '已加锁',
+        tagNeverExpire: '不限时保留',
         tagExpireIn: '{min} 分钟后销毁',
         tagActive: '当前打开',
         tipActive: '当前正在前台打开的活跃聊天，请先在酒馆切换到其他聊天后再清理',
@@ -98,7 +118,9 @@ const I18N = {
         tagBackup: '备份文件',
         tipBackup: '识别为备份存档文件，全选默认跳过，可手动勾选清理',
         tagCheckpoint: '分支/书签',
-        tipCheckpoint: '依据文件名或元数据特征识别为分支/书签节点（手动改名可能无法识别）',
+        tipCheckpoint: '识别为分支或书签节点，全选默认跳过，可手动勾选清理',
+        tagParentChat: '主干聊天(含{n}分支)',
+        tipParentChat: '该记录下关联了 {n} 个子分支/书签，删除主干可能断开分支返回链接，全选默认跳过',
         footerStat: '已选 <b style="color:var(--cmp-accent);">{sel}</b>/{selectable} 可选项 (<b>{size}</b>){extra}',
         footerExtraRisk: ' <span style="color:#fca5a5 !important; font-weight:600;">[含慎删 {n} 项]</span>',
         footerExtraExempt: ' <span style="opacity:0.75;">[已豁免 {n} 项]</span>',
@@ -117,10 +139,16 @@ const I18N = {
         setLargeWarnTitle: '异常大体积少消息防误触警告 (防误删坏档)',
         setLargeWarnDesc: '当消息数 ≤2 条但体积达到设定阈值时标为「慎删」，全选时默认跳过，手动勾选删除时弹出高危确认。',
         setLargeKBLabel: '阈值(KB):',
+        setBranchProtTitle: '保护分支、书签与主干聊天 (防断链)',
+        setBranchProtDesc: '开启后，分支/书签及含有子分支的父聊天将标为「慎删」，全选时默认跳过。',
         setVerifyTitle: '删除前核对文件状态 (安全锁)',
         setVerifyDesc: '执行删除时读取文件实际消息数，若与缓存列表不一致则跳过删除并在后台触发刷新。',
         setBackupTitle: '删除前自动备份至回收站 (安全锁)',
-        setBackupDesc: '开启后被删文件将在回收站保留 60 分钟，期间可恢复、导出或加锁。关闭且回收站为空时将隐藏回收站入口。',
+        setBackupDesc: '开启后被删文件将先存入本地回收站，期间可恢复、导出或加锁。关闭且回收站为空时将隐藏回收站入口。',
+        setRetentionTitle: '回收站自动清理时长 (分钟)',
+        setRetentionDesc: '最小 5 分钟（低于 5 按 5 计）；最大 10080 分钟（7天）。输入超过 10080 的数值则永不自动清理。',
+        setRetentionStatusNever: '当前：永不自动清理 (>10080)',
+        setRetentionStatusMins: '当前：{m} 分钟后自动清理',
         setConcurrencyTitle: '扫描并发请求数',
         setConcurrencyDesc: '同时请求的角色卡数量（建议 6 ~ 12）。'
     },
@@ -133,7 +161,8 @@ const I18N = {
         resetUiTip: 'Reset theme and 14px font size only (keeps safety settings)',
         closeBtn: '✕ Close',
         tabManager: 'Chat List',
-        tabTrash: 'Trash Bin (60m)',
+        tabTrash: 'Trash Bin ({time})',
+        tabTrashNever: 'No Expiry',
         tabSettings: 'Settings',
         statusReady: 'Ready',
         pauseBtn: 'Pause',
@@ -190,6 +219,7 @@ const I18N = {
         btnUnlock: 'Unlock',
         btnDestroy: 'Destroy',
         tagLocked: 'Locked',
+        tagNeverExpire: 'Never Expires',
         tagExpireIn: 'Expires in {min}m',
         tagActive: 'Active Chat',
         tipActive: 'Currently open in SillyTavern. Switch to another chat before cleaning.',
@@ -198,7 +228,9 @@ const I18N = {
         tagBackup: 'Backup File',
         tipBackup: 'Identified as a backup file. Skipped by Select All; check manually to clean.',
         tagCheckpoint: 'Checkpoint/Branch',
-        tipCheckpoint: 'Identified as a branch/checkpoint via filename or metadata (renamed branches may not be detected).',
+        tipCheckpoint: 'Identified as a branch/checkpoint. Skipped by Select All; check manually to clean.',
+        tagParentChat: 'Parent Chat ({n} branches)',
+        tipParentChat: 'Has {n} dependent child branch(es)/checkpoint(s). Skipped by Select All.',
         footerStat: 'Selected <b style="color:var(--cmp-accent);">{sel}</b>/{selectable} selectable (<b>{size}</b>){extra}',
         footerExtraRisk: ' <span style="color:#fca5a5 !important; font-weight:600;">[{n} High-Risk]</span>',
         footerExtraExempt: ' <span style="opacity:0.75;">[{n} Exempt]</span>',
@@ -217,10 +249,16 @@ const I18N = {
         setLargeWarnTitle: 'Large-Size & Few-Messages Warning (Anti-Corruption)',
         setLargeWarnDesc: 'Flags files with ≤2 msgs but size ≥ threshold as High-Risk. Skipped by Select All; requires confirmation to delete.',
         setLargeKBLabel: 'Threshold(KB):',
+        setBranchProtTitle: 'Protect Branches, Checkpoints & Parent Chats',
+        setBranchProtDesc: 'Flags branches and parent chats with dependent checkpoints as High-Risk so Select All skips them.',
         setVerifyTitle: 'Verify File State Before Delete (Safety Lock)',
         setVerifyDesc: 'Checks live message count before deleting. Skips if count differs from cache and triggers resync.',
         setBackupTitle: 'Auto Backup to Trash Bin Before Delete (Safety Lock)',
-        setBackupDesc: 'Keeps deleted chats in local IndexedDB for 60 mins (restorable & lockable). Hides Trash tab when off and empty.',
+        setBackupDesc: 'Keeps deleted chats in local IndexedDB (restorable & lockable). Hides Trash tab when off and empty.',
+        setRetentionTitle: 'Trash Bin Retention Time (Minutes)',
+        setRetentionDesc: 'Min 5 mins (<5 counts as 5); Max 10080 mins (7 days). Enter >10080 to never auto-purge.',
+        setRetentionStatusNever: 'Current: Never auto-purge (>10080)',
+        setRetentionStatusMins: 'Current: Auto-purge after {m}m',
         setConcurrencyTitle: 'Scan Concurrency',
         setConcurrencyDesc: 'Number of simultaneous character requests during scan (Recommended: 6 ~ 12).'
     }
@@ -239,6 +277,24 @@ function isEn() {
     return State?.settings?.lang === 'en';
 }
 
+// 规则：小于 5 分钟按 5 分钟计；大于 10080 分钟保留原值并视为“永不自动清理”
+function normalizeRetentionMins(val) {
+    const n = Number(val);
+    if (isNaN(n)) return 60;
+    if (n < MIN_RETENTION_MINS) return MIN_RETENTION_MINS;
+    return Math.min(999999, Math.round(n));
+}
+
+function isRetentionNever(mins) {
+    return Number(mins) > MAX_RETENTION_MINS;
+}
+
+function getRetentionLabelText() {
+    const mins = State?.settings?.trashRetentionMins ?? 60;
+    if (isRetentionNever(mins)) return t('tabTrashNever');
+    return isEn() ? `${mins}m` : `${mins}分钟`;
+}
+
 function sanitizeSettings(rawObj) {
     const merged = { ...DEFAULT_SETTINGS, ...(rawObj || {}) };
     merged.lang = merged.lang === 'en' ? 'en' : 'zh';
@@ -247,9 +303,11 @@ function sanitizeSettings(rawObj) {
     merged.fontSize = Math.min(18, Math.max(12, Number(merged.fontSize) || 14));
     merged.concurrency = Math.min(16, Math.max(2, Number(merged.concurrency) || 8));
     merged.safeBackupMode = Boolean(merged.safeBackupMode);
+    merged.trashRetentionMins = normalizeRetentionMins(merged.trashRetentionMins);
     merged.verifyBeforeDelete = Boolean(merged.verifyBeforeDelete);
     merged.largeZombieWarn = Boolean(merged.largeZombieWarn);
     merged.largeZombieSizeKB = Math.min(10240, Math.max(5, Number(merged.largeZombieSizeKB) || 15));
+    merged.protectBranches = merged.protectBranches !== undefined ? Boolean(merged.protectBranches) : true;
     return merged;
 }
 
@@ -266,6 +324,7 @@ const State = {
     settings: loadSettings(),
     allRecords: [],
     filteredRecords: [],
+    parentBranchCounts: new Map(), // 记录父聊天拥有的子分支数量: key=`${avatar}::${cleanChatName}` -> count
     selectedIds: new Set(),
     manualHighRiskIds: new Set(),
     trashMetaList: [],
@@ -296,6 +355,18 @@ function applyAppearance() {
 }
 
 function updateTrashTabVisibility() {
+    // 1. 当关闭自动备份时，立即隐藏设置页里的「回收站自动清理时长」卡片（但保留存储在 settings 中的值）
+    const $retCard = $('#cmp-retention-setting-card');
+    if ($retCard.length) {
+        if (State.settings.safeBackupMode) {
+            $retCard.show();
+        } else {
+            $retCard.hide();
+        }
+    }
+
+    // 2. 更新回收站 Tab 标题与显隐状态
+    $('#cmp-tab-trash-label').text(t('tabTrash', { time: getRetentionLabelText() }));
     const $trashTab = $('.cmp-tab[data-tab="trash"]');
     if (!$trashTab.length) return;
     if (!State.settings.safeBackupMode && State.trashMetaList.length === 0) {
@@ -455,8 +526,19 @@ async function purgeExpiredTrash() {
         const metas = await dbGetAll(STORE_TRASH_META);
         if (!Array.isArray(metas)) return;
 
+        // 若用户在设置中将保留时长设为了 >10080（永不自动清理），则跳过后台自动销毁
+        if (isRetentionNever(State.settings.trashRetentionMins)) {
+            if (State.trashMetaList.length !== metas.length) {
+                State.trashMetaList = metas.sort((a, b) => b.deletedAt - a.deletedAt);
+                $('#cmp-trash-badge').text(State.trashMetaList.length);
+            }
+            return;
+        }
+
         const now = Date.now();
-        const expiredIds = metas.filter((m) => !m.locked && now >= m.expiresAt).map((m) => m.id);
+        const expiredIds = metas
+            .filter((m) => !m.locked && m.expiresAt > 0 && now >= m.expiresAt)
+            .map((m) => m.id);
 
         let changed = false;
         if (expiredIds.length > 0) {
@@ -482,7 +564,7 @@ if (window.__cmp_purge_interval) clearInterval(window.__cmp_purge_interval);
 window.__cmp_purge_interval = setInterval(purgeExpiredTrash, 60000);
 
 // ============================================================================
-// 2. 工具函数、时间解析与风险标记评估
+// 2. 工具函数、时间解析与分支父子依赖图构建
 // ============================================================================
 function debounce(fn, wait = 120) {
     let timer = null;
@@ -574,8 +656,24 @@ function buildSafeAvatarUrl(avatarFile) {
     return `/characters/${encodeURIComponent(avatarFile || '')}`;
 }
 
+// 构建父聊天 -> 子分支数量反向依赖索引
+function rebuildParentBranchIndex(records) {
+    const map = new Map();
+    for (const r of records) {
+        if (r.parentChat && typeof r.parentChat === 'string') {
+            const cleanParent = r.parentChat.replace(/\.jsonl$/i, '').trim();
+            if (cleanParent) {
+                const key = `${r.avatarFile}::${cleanParent}`;
+                map.set(key, (map.get(key) || 0) + 1);
+            }
+        }
+    }
+    State.parentBranchCounts = map;
+}
+
 function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, infoObj) {
     try {
+        // 1. 当前正在前台打开的活跃聊天（强制豁免）
         if (this_chid !== undefined && Array.isArray(characters) && characters[this_chid]) {
             const activeChar = characters[this_chid];
             const activeChat = String(activeChar.chat || '').replace(/\.jsonl$/i, '');
@@ -590,6 +688,7 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
             }
         }
 
+        // 2. 异常大体积但消息极少
         const warnEnabled = State.settings.largeZombieWarn;
         const warnThresholdKB = Number(State.settings.largeZombieSizeKB) || 15;
         if (warnEnabled && msgCount <= 2 && sizeKB >= warnThresholdKB) {
@@ -602,6 +701,7 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
             };
         }
 
+        // 3. 备份文件特征
         const lowerRaw = String(rawFile).toLowerCase();
         const lowerClean = String(cleanFile).toLowerCase();
         if (
@@ -618,6 +718,20 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
             };
         }
 
+        // 4. 检查是否为拥有子分支的父级主干聊天 (Parent Chat)
+        const branchProtEnabled = State.settings.protectBranches;
+        const childCount = State.parentBranchCounts.get(`${avatarFile}::${cleanFile}`) || 0;
+        if (childCount > 0) {
+            return {
+                exempt: false,
+                highRisk: branchProtEnabled,
+                reason: 'parent_chat',
+                label: t('tagParentChat', { n: childCount }),
+                tip: t('tipParentChat', { n: childCount })
+            };
+        }
+
+        // 5. 检查是否为子分支 / 书签 (Checkpoint / Branch)
         const hasParentChat = Boolean(infoObj && typeof infoObj.main_chat === 'string' && infoObj.main_chat.trim().length > 0);
         const isCheckpoint =
             hasParentChat ||
@@ -629,7 +743,7 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
         if (isCheckpoint) {
             return {
                 exempt: false,
-                highRisk: false,
+                highRisk: branchProtEnabled, // 当开启分支保护时，设为 highRisk 使全选和预设默认跳过
                 reason: 'checkpoint',
                 label: t('tagCheckpoint'),
                 tip: t('tipCheckpoint')
@@ -643,6 +757,7 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
 }
 
 function refreshAllRecordsProtection() {
+    rebuildParentBranchIndex(State.allRecords);
     for (const r of State.allRecords) {
         const prot = evaluateProtection(r.avatarFile, r.chatFile, r.rawFileName, r.msgCount, r.sizeKB, {
             main_chat: r.parentChat
@@ -654,7 +769,6 @@ function refreshAllRecordsProtection() {
         r.tip = prot.tip;
 
         if (!r.highRisk) {
-            // 若当前已不再是 highRisk（如关闭了警告开关或调高了阈值），从手动高危集合中移除，保持状态自洽
             State.manualHighRiskIds.delete(r.id);
         }
 
@@ -782,10 +896,7 @@ async function runIncrementalOrFullScan(forceFull = false) {
                 if (!forceFull && cached && cached.signature === sig && Array.isArray(cached.records)) {
                     cacheHits++;
                     for (const rec of cached.records) {
-                        const prot = evaluateProtection(rec.avatarFile, rec.chatFile, rec.rawFileName, rec.msgCount, rec.sizeKB, {
-                            main_chat: rec.parentChat
-                        });
-                        collected.push({ ...rec, ...prot });
+                        collected.push({ ...rec });
                     }
                     done++;
                     if (done % 20 === 0 || done === totalChars) {
@@ -828,7 +939,6 @@ async function runIncrementalOrFullScan(forceFull = false) {
                                 : 1.2;
                             const lastTime = parseTimestamp(info, cleanFile);
                             const parentChat = (typeof info === 'object' && typeof info.main_chat === 'string') ? info.main_chat : '';
-                            const prot = evaluateProtection(avatar, cleanFile, fullFileName, msgCount, sizeKB, info);
 
                             charRecords.push({
                                 id: `${avatar}::${cleanFile}`,
@@ -840,8 +950,7 @@ async function runIncrementalOrFullScan(forceFull = false) {
                                 msgCount,
                                 sizeKB,
                                 lastTime,
-                                parentChat,
-                                ...prot
+                                parentChat
                             });
                         }
 
@@ -998,7 +1107,7 @@ function renderManagerTable() {
         if (r.label) {
             let tagClass = 'cmp-tag-warn';
             if (r.exempt) tagClass = 'cmp-tag-exempt';
-            else if (r.highRisk) tagClass = 'cmp-tag-danger';
+            else if (r.reason === 'corrupted_large' || r.reason === 'backup') tagClass = 'cmp-tag-danger';
             protTagHtml = `<span class="cmp-tag ${tagClass}" title="${escapeHtml(r.tip)}">${escapeHtml(r.label)}</span> `;
         }
 
@@ -1279,7 +1388,7 @@ async function exportRecordToJsonl(recordId, isTrash = false) {
 }
 
 // ============================================================================
-// 7. 批量删除与高危文件防误触警告
+// 7. 批量删除与高危文件防误触警告（合入 ChatGPT P0：网络异常绝不误删回收站备份）
 // ============================================================================
 function confirmAndDelete() {
     if (State.taskStatus !== 'idle') {
@@ -1297,7 +1406,7 @@ function confirmAndDelete() {
     const maxMsg = Math.max(...targets.map((r) => r.msgCount));
     const corruptedLargeItems = targets.filter((r) => r.reason === 'corrupted_large');
     const backupItems = targets.filter((r) => r.reason === 'backup');
-    const checkpointItems = targets.filter((r) => r.reason === 'checkpoint');
+    const branchOrParentItems = targets.filter((r) => r.reason === 'checkpoint' || r.reason === 'parent_chat');
 
     let warningBoxesHtml = '';
 
@@ -1325,9 +1434,19 @@ function confirmAndDelete() {
         `;
     }
 
+    if (branchOrParentItems.length > 0) {
+        warningBoxesHtml += `
+            <div style="padding:8px; margin-bottom:6px; background:rgba(245,158,11,0.18); border:1px solid #f59e0b; border-radius:6px; color:#fcd34d !important;">
+                🌿 ${isEn()
+                    ? `Branch Warning: Selection includes <b>${branchOrParentItems.length}</b> branch/checkpoint or parent chat(s) with dependent branches.`
+                    : `分支关联警告：所选项中包含 <b>${branchOrParentItems.length}</b> 个分支/书签或含有子分支的主干聊天，删除可能导致剧情树断链。`}
+            </div>
+        `;
+    }
+
     if (maxMsg > 1) {
         warningBoxesHtml += `
-            <div style="padding:8px; margin-bottom:6px; background:rgba(245,158,11,0.16); border:1px solid #f59e0b; border-radius:6px; color:#fcd34d !important;">
+            <div style="padding:8px; margin-bottom:6px; background:rgba(59,130,246,0.16); border:1px solid #3b82f6; border-radius:6px; color:#93c5fd !important;">
                 ${isEn()
                     ? `Reminder: Selected chats contain up to <b>${maxMsg} messages</b>.`
                     : `提醒：勾选列表中包含消息数最高为 <b>${maxMsg} 条</b> 的记录。`}
@@ -1335,20 +1454,14 @@ function confirmAndDelete() {
         `;
     }
 
-    if (checkpointItems.length > 0) {
-        warningBoxesHtml += `
-            <div style="padding:8px; background:rgba(59,130,246,0.16); border:1px solid #3b82f6; border-radius:6px; color:#93c5fd !important;">
-                ${isEn()
-                    ? `Tip: Selection includes <b>${checkpointItems.length}</b> branch/checkpoint file(s).`
-                    : `提示：所选项中包含 <b>${checkpointItems.length}</b> 个分支/书签文件。`}
-            </div>
-        `;
-    }
-
-    const isHighRiskConfirm = corruptedLargeItems.length > 0 || backupItems.length > 0;
+    const isHighRiskConfirm = corruptedLargeItems.length > 0 || backupItems.length > 0 || branchOrParentItems.length > 0;
     const confirmBtnText = isEn()
         ? (isHighRiskConfirm ? `Force Clean (${targets.length})` : `Confirm Clean (${targets.length})`)
         : (isHighRiskConfirm ? `已知晓风险，强制清理 (${targets.length} 项)` : `确认清理 (${targets.length} 项)`);
+
+    const retText = isRetentionNever(State.settings.trashRetentionMins)
+        ? (isEn() ? 'ON (Never auto-expires)' : '已开启（不限时永久保留，直至手动清空）')
+        : (isEn() ? `ON (Kept for ${State.settings.trashRetentionMins} mins)` : `已开启（保留 ${State.settings.trashRetentionMins} 分钟）`);
 
     showSubModal(
         isEn() ? 'Confirm Batch Chat Cleanup' : '确认批量清理聊天记录',
@@ -1358,7 +1471,7 @@ function confirmAndDelete() {
                 : `即将清理 <b>${targets.length}</b> 份聊天文件，预计释放 <b>${formatSize(totalKB)}</b>。`}</p>
             <p style="margin:0 0 8px 0; color:var(--cmp-text-sub) !important; font-size:0.9em;">
                 • ${isEn() ? 'Verify Before Delete' : '删除前核对状态'}: <b>${State.settings.verifyBeforeDelete ? (isEn() ? 'ON (Skips mismatched files)' : '已开启（若实际消息数与列表缓存不符将自动跳过）') : (isEn() ? 'OFF' : '已关闭')}</b><br>
-                • ${isEn() ? 'Trash Bin Backup' : '回收站自动备份'}: <b>${State.settings.safeBackupMode ? (isEn() ? 'ON (Kept for 60 mins)' : '已开启（备份写入成功后才执行删除，保留 60 分钟）') : (isEn() ? 'OFF (Permanent deletion!)' : '已关闭（直接从磁盘永久粉碎！）')}</b>
+                • ${isEn() ? 'Trash Bin Backup' : '回收站自动备份'}: <b>${State.settings.safeBackupMode ? retText : (isEn() ? 'OFF (Permanent deletion!)' : '已关闭（直接从磁盘永久粉碎！）')}</b>
             </p>
             ${warningBoxesHtml}
         </div>`,
@@ -1374,6 +1487,26 @@ function confirmAndDelete() {
             }
         ]
     );
+}
+
+// 辅助核实原文件是否仍在服务端磁盘上（仅在确认原文件完好时才允许清理临时备份）
+async function verifyFileStillExistsOnServer(avatarFile, rawFileName) {
+    try {
+        const res = await fetch('/api/characters/chats', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ avatar_url: avatarFile })
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        const entries = Array.isArray(data) ? data : Object.values(data);
+        return entries.some((info) => {
+            const rf = typeof info === 'string' ? info : info?.file_name;
+            return rf === rawFileName || `${String(rf).replace(/\.jsonl$/i, '')}.jsonl` === rawFileName;
+        });
+    } catch {
+        return false;
+    }
 }
 
 async function executeBatchDelete(targets) {
@@ -1393,6 +1526,7 @@ async function executeBatchDelete(targets) {
     let skippedReadError = 0;
     let skippedDeleteFail = 0;
     let skippedBackupFail = 0;
+    let uncertainBackupKept = 0;
     let freedKB = 0;
 
     const affectedAvatars = new Set();
@@ -1472,6 +1606,8 @@ async function executeBatchDelete(targets) {
                             continue;
                         }
                         const now = Date.now();
+                        const neverExpire = isRetentionNever(taskSettings.trashRetentionMins);
+                        const expireMs = neverExpire ? 0 : (taskSettings.trashRetentionMins * 60000);
                         const trashId = `${item.id}::${now}::${Math.random().toString(36).slice(2, 6)}`;
                         const metaObj = {
                             id: trashId,
@@ -1484,7 +1620,7 @@ async function executeBatchDelete(targets) {
                             sizeKB: item.sizeKB,
                             lastTime: item.lastTime > 0 ? item.lastTime : 0,
                             deletedAt: now,
-                            expiresAt: now + 3600000,
+                            expiresAt: neverExpire ? 0 : (now + expireMs),
                             locked: false
                         };
                         const savedOk = await dbSaveTrashPair(metaObj, { id: trashId, messages: liveMessages });
@@ -1497,16 +1633,29 @@ async function executeBatchDelete(targets) {
                         State.trashMetaList.unshift(metaObj);
                     }
 
-                    const delRes = await fetch('/api/chats/delete', {
-                        method: 'POST',
-                        headers: getRequestHeaders(),
-                        body: JSON.stringify({
-                            chatfile: item.rawFileName,
-                            avatar_url: item.avatarFile
-                        })
-                    });
+                    // P0 安全修复：单独捕获 /api/chats/delete 的网络请求异常。
+                    // 一旦删除请求已发出但遇到网络中断/超时（状态未知），绝不删除回收站里的备份！
+                    let delRes = null;
+                    let networkUncertain = false;
+                    try {
+                        delRes = await fetch('/api/chats/delete', {
+                            method: 'POST',
+                            headers: getRequestHeaders(),
+                            body: JSON.stringify({
+                                chatfile: item.rawFileName,
+                                avatar_url: item.avatarFile
+                            })
+                        });
+                    } catch (netErr) {
+                        networkUncertain = true;
+                        console.warn(`[ChatCleaner] Delete request network uncertain, keeping backup in Trash: ${item.chatFile}`, netErr);
+                    }
 
-                    if (delRes.ok) {
+                    if (networkUncertain) {
+                        // 网络异常结果未知：锁死保留回收站备份，绝不回滚
+                        myTrashId = null;
+                        uncertainBackupKept++;
+                    } else if (delRes && delRes.ok) {
                         myTrashId = null;
                         deletedCount++;
                         freedKB += item.sizeKB;
@@ -1525,19 +1674,22 @@ async function executeBatchDelete(targets) {
                             }
                         } catch { /* 忽略纯 DOM 动画异常 */ }
                     } else {
+                        // 服务端返回非 200：先核实原文件是否真的还在磁盘上，只有确认原文件完好才清理临时备份
                         if (taskSettings.safeBackupMode && myTrashId) {
-                            await removeTrashRecord(myTrashId);
+                            const stillExists = await verifyFileStillExistsOnServer(item.avatarFile, item.rawFileName);
+                            if (stillExists) {
+                                await removeTrashRecord(myTrashId);
+                            } else {
+                                uncertainBackupKept++;
+                            }
                             myTrashId = null;
                         }
                         skippedDeleteFail++;
                     }
                 } catch (e) {
-                    if (taskSettings.safeBackupMode && myTrashId) {
-                        await removeTrashRecord(myTrashId);
-                        myTrashId = null;
-                    }
+                    // 仅当还未发出删除请求前的准备阶段抛错，才回滚
                     skippedReadError++;
-                    console.error(`[ChatCleaner] Delete error: ${item.chatFile}`, e);
+                    console.error(`[ChatCleaner] Pre-delete error: ${item.chatFile}`, e);
                 }
 
                 done++;
@@ -1547,6 +1699,8 @@ async function executeBatchDelete(targets) {
         }
 
         await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(1, total)) }, () => delWorker()));
+
+        refreshAllRecordsProtection();
 
         for (const avatar of affectedAvatars) {
             const cached = await dbGet(STORE_CACHE, avatar);
@@ -1575,6 +1729,11 @@ async function executeBatchDelete(targets) {
             ? `${skippedBackupFail} file(s) failed to backup due to browser storage limit. Deletion aborted to protect files!`
             : `${skippedBackupFail} 份文件因浏览器存储空间不足备份失败，已自动中止删除原文件！`);
     }
+    if (uncertainBackupKept > 0) {
+        toastr.warning(isEn()
+            ? `${uncertainBackupKept} file(s) had uncertain network response during delete; backups safely kept in Trash Bin.`
+            : `${uncertainBackupKept} 份文件删除时网络响应中断，为确保安全已为您完整保留回收站备份！`);
+    }
     if (skippedActive > 0) {
         toastr.warning(isEn() ? `Skipped ${skippedActive} currently active chat(s)` : `跳过 ${skippedActive} 份当前正在打开的活跃聊天`);
     }
@@ -1584,10 +1743,12 @@ async function executeBatchDelete(targets) {
     if (skippedDeleteFail > 0) {
         toastr.warning(isEn() ? `${skippedDeleteFail} file(s) failed to delete via API` : `${skippedDeleteFail} 份文件调用删除接口未成功，已保留原文件`);
     }
-    if (skippedCountDiff > 0) {
-        toastr.warning(isEn()
-            ? `${skippedCountDiff} file(s) differed from cached message count. Skipped & resyncing...`
-            : `发现 ${skippedCountDiff} 份文件实际消息数与缓存不符，已跳过并同步最新状态`);
+    if (skippedCountDiff > 0 || uncertainBackupKept > 0) {
+        if (skippedCountDiff > 0) {
+            toastr.warning(isEn()
+                ? `${skippedCountDiff} file(s) differed from cached message count. Skipped & resyncing...`
+                : `发现 ${skippedCountDiff} 份文件实际消息数与缓存不符，已跳过并同步最新状态`);
+        }
         runIncrementalOrFullScan(true);
     }
 
@@ -1621,12 +1782,18 @@ function renderTrashTable() {
     }
 
     const now = Date.now();
+    const globalNever = isRetentionNever(State.settings.trashRetentionMins);
     let html = '';
     for (const item of list) {
-        const leftMin = Math.max(0, Math.ceil((item.expiresAt - now) / 60000));
-        const badge = item.locked
-            ? `<span class="cmp-tag" style="background:rgba(245,158,11,0.2); color:#fcd34d !important;">${escapeHtml(t('tagLocked'))}</span>`
-            : `<span class="cmp-tag cmp-tag-normal">${escapeHtml(t('tagExpireIn', { min: leftMin }))}</span>`;
+        let badge = '';
+        if (item.locked) {
+            badge = `<span class="cmp-tag" style="background:rgba(245,158,11,0.2); color:#fcd34d !important;">${escapeHtml(t('tagLocked'))}</span>`;
+        } else if (globalNever || !item.expiresAt || item.expiresAt <= 0) {
+            badge = `<span class="cmp-tag cmp-tag-exempt">${escapeHtml(t('tagNeverExpire'))}</span>`;
+        } else {
+            const leftMin = Math.max(0, Math.ceil((item.expiresAt - now) / 60000));
+            badge = `<span class="cmp-tag cmp-tag-normal">${escapeHtml(t('tagExpireIn', { min: leftMin }))}</span>`;
+        }
         const safeAvatar = buildSafeAvatarUrl(item.avatarFile);
 
         html += `
@@ -1735,7 +1902,6 @@ async function restoreFromTrash(trashId, forceRename = false, batchMode = false)
             if (!batchMode) renderTrashTable();
 
             const rawFileName = `${targetChatFile}.jsonl`;
-            const prot = evaluateProtection(meta.avatarFile, targetChatFile, rawFileName, meta.msgCount, meta.sizeKB, null);
             const restoredItem = {
                 id: `${meta.avatarFile}::${targetChatFile}`,
                 charName: meta.charName,
@@ -1746,8 +1912,7 @@ async function restoreFromTrash(trashId, forceRename = false, batchMode = false)
                 msgCount: meta.msgCount,
                 sizeKB: meta.sizeKB,
                 lastTime: meta.lastTime > 0 ? meta.lastTime : 0,
-                parentChat: '',
-                ...prot
+                parentChat: ''
             };
 
             State.allRecords = State.allRecords.filter((r) => r.id !== restoredItem.id);
@@ -1804,7 +1969,7 @@ function getRiskNoticeHtml() {
                 <b style="color:#fca5a5 !important;">⚠️ Key Risks & Data Safety Notice (Must Read):</b>
                 <ul style="margin:6px 0 0 0; padding-left:18px; color:var(--cmp-text-main) !important;">
                     <li><b>External File Edits</b>: If you manually add/modify files inside <code>chats/</code> via OS file explorer, click <b>"Full Rescan"</b> to sync cache.</li>
-                    <li><b>Browser Data Clearing</b>: The 60-minute Trash Bin is stored in your browser's IndexedDB. Clearing site data or using Incognito mode will erase Trash backups.</li>
+                    <li><b>Browser Data Clearing</b>: The Trash Bin is stored in your browser's IndexedDB. Clearing site data or using Incognito mode will erase Trash backups.</li>
                     <li><b>Permanent Deletion</b>: Disabling "Auto Backup to Trash Bin" or clicking "Destroy" in the Trash Bin permanently removes files from disk.</li>
                 </ul>
             </div>
@@ -1815,7 +1980,7 @@ function getRiskNoticeHtml() {
             <b style="color:#fca5a5 !important;">⚠️ 核心使用风险与数据安全须知（必读）：</b>
             <ul style="margin:6px 0 0 0; padding-left:18px; color:var(--cmp-text-main) !important;">
                 <li><b>外部手动改文件风险</b>：若您在操作系统文件夹中直接修改或新增了 <code>chats/</code> 下的文件，酒馆前端内存签名不会自动变更，请务必点击一次<b>“全量重扫”</b>同步最新状态。</li>
-                <li><b>浏览器缓存清理风险</b>：60 分钟回收站数据保存在当前浏览器的 IndexedDB 中。若清除浏览器站点数据、无痕模式关闭或更换浏览器，回收站内的备份将丢失。</li>
+                <li><b>浏览器缓存清理风险</b>：回收站数据保存在当前浏览器的 IndexedDB 中。若清除浏览器站点数据、无痕模式关闭或更换浏览器，回收站内的备份将丢失。</li>
                 <li><b>物理删除不可逆风险</b>：若关闭“删除前自动备份至回收站”或在回收站中执行“销毁”，文件将从硬盘物理移除，无法通过软件途径找回。</li>
             </ul>
         </div>
@@ -1826,10 +1991,10 @@ function showDisclaimerModal() {
     const bodyHtml = isEn()
         ? `<p style="margin-top:0;">Welcome to <b>Chat Cleaner & Manager</b>. Please review the safety notice before proceeding:</p>
            ${getRiskNoticeHtml()}
-           <p style="margin-bottom:0;">By default, <b>Verify Before Delete</b>, <b>60-Min Trash Bin Backup</b>, and <b>Large-Size Few-Messages Warning</b> are enabled. Backing up your SillyTavern data folder before massive cleanup is always recommended.</p>`
+           <p style="margin-bottom:0;">By default, <b>Verify Before Delete</b>, <b>Trash Bin Backup</b>, <b>Branch/Parent Protection</b>, and <b>Large-Size Few-Messages Warning</b> are enabled. Backing up your SillyTavern data folder before massive cleanup is always recommended.</p>`
         : `<p style="margin-top:0;">欢迎使用聊天记录管理器。在开始清理前，请仔细阅读以下说明（点击左下角可切换 English / 中文）：</p>
            ${getRiskNoticeHtml()}
-           <p style="margin-bottom:0;">插件默认已开启<b>“删除前核对文件状态”</b>、<b>“60分钟回收站备份”</b>以及<b>“大体积少消息防误触警告”</b>，但仍建议在大批量清理前备份您的酒馆数据目录。</p>`;
+           <p style="margin-bottom:0;">插件默认已开启<b>“删除前核对文件状态”</b>、<b>“回收站自动备份”</b>、<b>“分支与主干保护”</b>以及<b>“大体积少消息防误触警告”</b>，但仍建议在大批量清理前备份您的酒馆数据目录。</p>`;
 
     showSubModal(
         isEn() ? 'Disclaimer & Safety Notice' : '免责声明与安全使用须知',
@@ -1862,14 +2027,14 @@ function openHelpModal() {
             <h4>1. Anti-Misclick Protection & Management Control</h4>
             <ul>
                 <li><b>SillyTavern Native Backups Untouched</b>: ST 1.17+ automatic crash backups in <code>backups/</code> are never touched by this extension.</li>
-                <li><b>Large-Size Few-Messages Warning (Configurable)</b>: Files with ≤2 msgs but size ≥ threshold (default 15KB) are flagged as <b>Large File / Few Msgs</b>. "Select Normal" and presets skip them automatically, while you can still manually check them to force clean.</li>
+                <li><b>Large-Size Few-Messages Warning (Configurable)</b>: Files with ≤2 msgs but size ≥ threshold (default 15KB) are flagged as <b>Large File / Few Msgs</b>. "Select Normal" and presets skip them automatically.</li>
+                <li><b>Branch, Checkpoint & Parent Protection</b>: Automatically builds a parent-child dependency index. Both branches and parent chats with dependent checkpoints are skipped by "Select Normal".</li>
                 <li><b>Active Chat Protection</b>: The currently open chat is marked <b>Active Chat</b> and locked until you switch chats.</li>
-                <li><b>Branch / Checkpoint Detection</b>: Identified via filename patterns (checkpoint/branch) and metadata (manually renamed branches may not be detected).</li>
             </ul>
             <h4>2. How It Works</h4>
             <ul>
                 <li><b>Last Chat Timestamp</b>: Parses <code>last_mes</code> from ST API (compatible with <code>@15h 42m</code> & English dates). Falls back to filename date only if metadata is missing.</li>
-                <li><b>Atomic Trash Backup</b>: Metadata and message payload are saved in a single IndexedDB transaction before calling delete API.</li>
+                <li><b>Network-Resilient Trash Backup</b>: Metadata and message payload are atomically saved in IndexedDB before calling delete API. If network drops during delete, the backup is strictly preserved.</li>
             </ul>
         `
         : `
@@ -1877,14 +2042,14 @@ function openHelpModal() {
             <h4>一、 防误触保护与管理权限说明</h4>
             <ul>
                 <li><b>酒馆原生备份不受影响</b>：SillyTavern 1.17+ 的防崩溃自动备份存放在独立的 <code>backups/</code> 目录下，本插件不会触碰该目录。</li>
-                <li><b>异常大体积少消息警告（可配置/可强制清理）</b>：当文件消息数 ≤2 条但体积达到设定阈值（默认 ≥15KB）时，可能是酒馆崩溃造成的坏档或含巨型世界书设定。插件会将其标为<b>大体积少消息(慎删)</b>，「全选普通项」与「预设按钮」会自动跳过它们防止误触；但您仍可手动勾选并在确认警告后强制清理，也可在设置中调整体积阈值或关闭该检测。</li>
+                <li><b>异常大体积少消息警告（可配置/可强制清理）</b>：当文件消息数 ≤2 条但体积达到设定阈值（默认 ≥15KB）时，可能是酒馆崩溃造成的坏档或含巨型世界书设定。插件会将其标为<b>大体积少消息(慎删)</b>，「全选普通项」与「预设按钮」会自动跳过它们。</li>
+                <li><b>分支、书签与父级主干保护</b>：自动构建父子分支反向索引，分支节点及含有子分支的主干聊天默认跳过全选，防止误删主干导致分支断链。</li>
                 <li><b>当前活跃对话保护</b>：当前正在前台打开的聊天标为<b>当前打开</b>，需先在酒馆切换到其他聊天后方可清理。</li>
-                <li><b>分支/书签识别说明</b>：依据文件名特征（checkpoint/branch/书签/分支）及元数据特征识别，若手动修改过分支文件名可能不会被标记。</li>
             </ul>
             <h4>二、 实现原理与时间读取说明</h4>
             <ul>
-                <li><b>最后对话时间解析</b>：优先解析酒馆接口返回的 <code>last_mes</code> 最后互动时间（兼容 <code>@15h 42m</code> 格式与英文日期）；仅在缺失元数据时从文件名提取。手动改名且无内部时间戳的文件显示为“未知时间”。</li>
-                <li><b>状态核对与原子备份</b>：清理时先拉取完整数组核对真实消息数；开启回收站时，必须等待元数据与正文在同一事务中写入成功后，才执行物理删除。大量恢复后建议点一次“快速扫描”。</li>
+                <li><b>最后对话时间解析</b>：优先解析酒馆接口返回的 <code>last_mes</code> 最后互动时间（兼容 <code>@15h 42m</code> 格式与英文日期）；仅在缺失元数据时从文件名提取。</li>
+                <li><b>断网保护与原子备份</b>：开启回收站时，必须等待元数据与正文在同一 IndexedDB 事务中写入成功后才发起物理删除；若删除请求途中发生网络中断，强制保留回收站备份绝不回滚。</li>
             </ul>
         `;
 
@@ -1898,6 +2063,17 @@ function openHelpModal() {
 // ============================================================================
 // 10. 界面构建、动态语言刷新与事件绑定
 // ============================================================================
+function updateRetentionStatusHint() {
+    const mins = State.settings.trashRetentionMins;
+    const $hint = $('#cmp-retention-status-hint');
+    if (!$hint.length) return;
+    if (isRetentionNever(mins)) {
+        $hint.text(t('setRetentionStatusNever')).css('color', '#6ee7b7');
+    } else {
+        $hint.text(t('setRetentionStatusMins', { m: mins })).css('color', 'var(--cmp-accent)');
+    }
+}
+
 function applyLanguageToDOM() {
     $('#cmp_open_btn span').text(t('menuBtn'));
     $('#cmp_open_btn').attr('title', t('menuTitle'));
@@ -1911,7 +2087,7 @@ function applyLanguageToDOM() {
     $('#cmp-close-btn').text(t('closeBtn'));
 
     $('.cmp-tab[data-tab="manager"]').text(t('tabManager'));
-    $('#cmp-tab-trash-label').text(t('tabTrash'));
+    $('#cmp-tab-trash-label').text(t('tabTrash', { time: getRetentionLabelText() }));
     $('.cmp-tab[data-tab="settings"]').text(t('tabSettings'));
 
     updateControlButtons();
@@ -1981,14 +2157,19 @@ function applyLanguageToDOM() {
     $('#cmp-set-large-title').text(t('setLargeWarnTitle'));
     $('#cmp-set-large-desc').text(t('setLargeWarnDesc'));
     $('#cmp-set-large-kb-lbl').text(t('setLargeKBLabel'));
+    $('#cmp-set-branch-title').text(t('setBranchProtTitle'));
+    $('#cmp-set-branch-desc').text(t('setBranchProtDesc'));
     $('#cmp-set-verify-title').text(t('setVerifyTitle'));
     $('#cmp-set-verify-desc').text(t('setVerifyDesc'));
     $('#cmp-set-backup-title').text(t('setBackupTitle'));
     $('#cmp-set-backup-desc').text(t('setBackupDesc'));
+    $('#cmp-set-retention-title').text(t('setRetentionTitle'));
+    $('#cmp-set-retention-desc').text(t('setRetentionDesc'));
     $('#cmp-set-conc-title').text(t('setConcurrencyTitle'));
     $('#cmp-set-conc-desc').text(t('setConcurrencyDesc'));
 
     $('#cmp-set-lang').val(State.settings.lang);
+    updateRetentionStatusHint();
 
     applyFiltersAndRender(false);
     if (State.activeTab === 'trash') renderTrashTable();
@@ -2004,7 +2185,7 @@ function updateControlButtons() {
     const st = State.taskStatus;
     const isBusy = st !== 'idle';
 
-    $('#cmp-set-verify, #cmp-set-backup, #cmp-set-large-warn, #cmp-set-large-kb, #cmp-set-concurrency, #cmp-reset-ui-top, #cmp-reset-ui-settings').prop('disabled', isBusy);
+    $('#cmp-set-verify, #cmp-set-backup, #cmp-set-retention-mins, #cmp-set-large-warn, #cmp-set-large-kb, #cmp-set-branch-prot, #cmp-set-concurrency, #cmp-reset-ui-top, #cmp-reset-ui-settings').prop('disabled', isBusy);
 
     if (st === 'idle') {
         $('#cmp-pause-btn, #cmp-stop-btn').hide();
@@ -2238,6 +2419,14 @@ async function openManagerModal() {
 
                                 <div class="cmp-setting-card">
                                     <div>
+                                        <div id="cmp-set-branch-title" class="cmp-setting-title"></div>
+                                        <div id="cmp-set-branch-desc" class="cmp-setting-desc"></div>
+                                    </div>
+                                    <input type="checkbox" id="cmp-set-branch-prot" checked>
+                                </div>
+
+                                <div class="cmp-setting-card">
+                                    <div>
                                         <div id="cmp-set-verify-title" class="cmp-setting-title"></div>
                                         <div id="cmp-set-verify-desc" class="cmp-setting-desc"></div>
                                     </div>
@@ -2250,6 +2439,16 @@ async function openManagerModal() {
                                         <div id="cmp-set-backup-desc" class="cmp-setting-desc"></div>
                                     </div>
                                     <input type="checkbox" id="cmp-set-backup" checked>
+                                </div>
+
+                                <!-- 回收站保留时间配置卡片：当关闭自动备份时自动隐藏，重新开启时恢复记住的值 -->
+                                <div id="cmp-retention-setting-card" class="cmp-setting-card">
+                                    <div>
+                                        <div id="cmp-set-retention-title" class="cmp-setting-title"></div>
+                                        <div id="cmp-set-retention-desc" class="cmp-setting-desc"></div>
+                                        <div id="cmp-retention-status-hint" style="font-size:0.8em; font-weight:600; margin-top:4px;"></div>
+                                    </div>
+                                    <input type="number" id="cmp-set-retention-mins" class="cmp-input cmp-input-num" style="width:82px;" min="5" value="60" title="5 ~ 10080 (>10080 = ∞)">
                                 </div>
 
                                 <div class="cmp-setting-card">
@@ -2293,9 +2492,12 @@ function syncSettingsToInputs() {
     $('#cmp-fontsize-val').text(State.settings.fontSize);
     $('#cmp-set-large-warn').prop('checked', State.settings.largeZombieWarn);
     $('#cmp-set-large-kb').val(State.settings.largeZombieSizeKB);
+    $('#cmp-set-branch-prot').prop('checked', State.settings.protectBranches);
     $('#cmp-set-verify').prop('checked', State.settings.verifyBeforeDelete);
     $('#cmp-set-backup').prop('checked', State.settings.safeBackupMode);
+    $('#cmp-set-retention-mins').val(State.settings.trashRetentionMins);
     $('#cmp-set-concurrency').val(State.settings.concurrency);
+    updateRetentionStatusHint();
 }
 
 function bindModalEvents() {
@@ -2425,7 +2627,10 @@ function bindModalEvents() {
         const item = State.trashMetaList.find((m) => m.id === id);
         if (!item) return;
         const nextLocked = !item.locked;
-        const nextExpires = nextLocked ? item.expiresAt : Date.now() + 3600000;
+        const neverExpire = isRetentionNever(State.settings.trashRetentionMins);
+        const nextExpires = nextLocked
+            ? item.expiresAt
+            : (neverExpire ? 0 : (Date.now() + State.settings.trashRetentionMins * 60000));
         const updated = { ...item, locked: nextLocked, expiresAt: nextExpires };
         const ok = await dbPut(STORE_TRASH_META, updated);
         if (ok) {
@@ -2563,6 +2768,19 @@ function bindModalEvents() {
         saveSettings({ ...State.settings, largeZombieSizeKB: v });
         applyFiltersAndRender(false);
     });
+    $('#cmp-set-branch-prot').on('change', function () {
+        saveSettings({ ...State.settings, protectBranches: this.checked });
+        applyFiltersAndRender(false);
+    });
+
+    // 回收站保留时间变更：低于 5 按 5 计，超过 10080 视为永不自动清理，并实时刷新状态提示与 Tab 标题
+    $('#cmp-set-retention-mins').on('change', function () {
+        const v = normalizeRetentionMins($(this).val());
+        $(this).val(v);
+        saveSettings({ ...State.settings, trashRetentionMins: v });
+        updateRetentionStatusHint();
+        if (State.activeTab === 'trash') renderTrashTable();
+    });
 
     $('#cmp-set-large-warn').on('change', function () {
         if (this.checked) {
@@ -2627,8 +2845,8 @@ function bindModalEvents() {
         showSubModal(
             isEn() ? '⚠️ CRITICAL: Disable Auto Backup to Trash Bin?' : '⚠️ 严重警告：确认关闭“删除前自动备份至回收站”？',
             isEn()
-                ? `<p>If disabled, cleaned chat files will be <b>permanently deleted from disk immediately</b> without going to the 60-minute Trash Bin!</p><p style="color:#fca5a5 !important;">Risk: Any accidental deletion will be completely unrecoverable.</p>`
-                : `<p>关闭此功能后，执行清理的聊天文件将<b>直接从硬盘永久粉碎，不再进入 60 分钟回收站</b>！</p><p style="color:#fca5a5 !important;">利害关系：一旦误删任何聊天记录，您将无法通过本插件恢复。且关闭后（当回收站为空时）回收站入口将自动隐藏。</p>`,
+                ? `<p>If disabled, cleaned chat files will be <b>permanently deleted from disk immediately</b> without going to the Trash Bin!</p><p style="color:#fca5a5 !important;">Risk: Any accidental deletion will be completely unrecoverable. The retention time setting and empty Trash tab will also be hidden.</p>`
+                : `<p>关闭此功能后，执行清理的聊天文件将<b>直接从硬盘永久粉碎，不再进入回收站</b>！</p><p style="color:#fca5a5 !important;">利害关系：一旦误删任何聊天记录，您将无法通过本插件恢复。关闭后「回收站清理时长」设置将自动隐藏（原设定值会被记住），且当回收站为空时隐藏回收站入口。</p>`,
             [
                 { text: isEn() ? 'Keep Enabled (Strongly Recommended)' : '保留开启 (强烈推荐)', className: 'cmp-btn cmp-btn-primary', onClick: closeSubModal },
                 {
