@@ -150,7 +150,23 @@ const I18N = {
         setRetentionStatusNever: '当前：永不自动清理 (>10080)',
         setRetentionStatusMins: '当前：{m} 分钟后自动清理',
         setConcurrencyTitle: '扫描并发请求数',
-        setConcurrencyDesc: '同时请求的角色卡数量（建议 6 ~ 12）。'
+        setConcurrencyDesc: '同时请求的角色卡数量（建议 6 ~ 12）。',
+        dashTotal: '总聊天',
+        dashSize: '占用',
+        dashChars: '角色',
+        dashZombie: '废档(≤1条)',
+        dashBranch: '分支/书签',
+        dashCorrupt: '疑似坏档',
+        dashTrash: '回收站',
+        dashClearFilter: '清除筛选',
+        sidebarAll: '全部角色',
+        sidebarSearch: '搜索角色...',
+        previewMetaStatusNormal: '正常',
+        previewMetaStatusActive: '当前打开',
+        previewMetaStatusParent: '主聊天（含 {n} 分支）',
+        previewMetaStatusCheckpoint: '分支/书签',
+        previewMetaStatusBackup: '备份文件',
+        previewMetaStatusCorrupt: '疑似坏档'
     },
     en: {
         menuBtn: 'Chat Cleaner',
@@ -260,7 +276,23 @@ const I18N = {
         setRetentionStatusNever: 'Current: Never auto-purge (>10080)',
         setRetentionStatusMins: 'Current: Auto-purge after {m}m',
         setConcurrencyTitle: 'Scan Concurrency',
-        setConcurrencyDesc: 'Number of simultaneous character requests during scan (Recommended: 6 ~ 12).'
+        setConcurrencyDesc: 'Number of simultaneous character requests during scan (Recommended: 6 ~ 12).',
+        dashTotal: 'Total chats',
+        dashSize: 'Size',
+        dashChars: 'Characters',
+        dashZombie: 'Greeting-only (≤1)',
+        dashBranch: 'Branch/Checkpoint',
+        dashCorrupt: 'Suspected corrupt',
+        dashTrash: 'Trash Bin',
+        dashClearFilter: 'Clear filters',
+        sidebarAll: 'All Characters',
+        sidebarSearch: 'Search character...',
+        previewMetaStatusNormal: 'Normal',
+        previewMetaStatusActive: 'Active',
+        previewMetaStatusParent: 'Parent chat ({n} branches)',
+        previewMetaStatusCheckpoint: 'Branch/Checkpoint',
+        previewMetaStatusBackup: 'Backup file',
+        previewMetaStatusCorrupt: 'Suspected corrupt'
     }
 };
 
@@ -324,7 +356,7 @@ const State = {
     settings: loadSettings(),
     allRecords: [],
     filteredRecords: [],
-    parentBranchCounts: new Map(), // 记录父聊天拥有的子分支数量: key=`${avatar}::${cleanChatName}` -> count
+    parentBranchCounts: new Map(),
     selectedIds: new Set(),
     manualHighRiskIds: new Set(),
     trashMetaList: [],
@@ -337,7 +369,10 @@ const State = {
     drawerOpen: true,
     hasInitialLoaded: false,
     modalOpening: false,
-    previewLoading: false
+    previewLoading: false,
+    selectedAvatar: null,        // 侧栏当前选中的角色 avatar；null = 全部
+    statusFilter: null,          // 'checkpoint' | 'corrupted_large' | 'backup' | null
+    activeDashboardKey: null     // 'zombie' | 'checkpoint' | 'corrupt' | null
 };
 
 function saveSettings(cfg) {
@@ -1061,6 +1096,12 @@ function applyFiltersAndRender(resetSelection = false) {
     refreshAllRecordsProtection();
 
     State.filteredRecords = State.allRecords.filter((r) => {
+        if (State.selectedAvatar && r.avatarFile !== State.selectedAvatar) return false;
+        if (State.statusFilter) {
+            if (State.statusFilter === 'checkpoint' && r.reason !== 'checkpoint') return false;
+            if (State.statusFilter === 'corrupted_large' && r.reason !== 'corrupted_large') return false;
+            if (State.statusFilter === 'backup' && r.reason !== 'backup') return false;
+        }
         if (kw && !r.charName.toLowerCase().includes(kw) && !r.chatFile.toLowerCase().includes(kw)) {
             return false;
         }
@@ -1084,13 +1125,185 @@ function applyFiltersAndRender(resetSelection = false) {
             case 'size_desc': return b.sizeKB - a.sizeKB;
             case 'size_asc': return a.sizeKB - b.sizeKB;
             case 'time_desc': return (b.lastTime || 0) - (a.lastTime || 0);
-            case 'time_asc': return (a.lastTime || Infinity) - (b.lastTime || Infinity);
+            case 'time_asc': return (a.lastTime || 0) - (b.lastTime || 0);
             case 'name_asc': return a.charName.localeCompare(b.charName, 'zh-CN');
             default: return 0;
         }
     });
 
     renderManagerTable();
+    updateDashboardActive();
+    updateSidebarActive();
+}
+
+// ---- Manager 增强：仪表盘 / 侧栏 / 预览元信息 ----
+function computeDashboardStats() {
+    const records = State.allRecords;
+    let totalKB = 0;
+    let zombieCount = 0;
+    let branchCount = 0;
+    let corruptCount = 0;
+    const avatarSet = new Set();
+    for (const r of records) {
+        totalKB += r.sizeKB || 0;
+        if (r.msgCount <= 1) zombieCount++;
+        if (r.reason === 'checkpoint') branchCount++;
+        if (r.reason === 'corrupted_large') corruptCount++;
+        if (r.avatarFile) avatarSet.add(r.avatarFile);
+    }
+    let trashKB = 0;
+    for (const m of State.trashMetaList) trashKB += m.sizeKB || 0;
+    return {
+        total: records.length,
+        totalKB,
+        chars: avatarSet.size,
+        zombieCount,
+        branchCount,
+        corruptCount,
+        trashCount: State.trashMetaList.length,
+        trashKB
+    };
+}
+
+function renderDashboard() {
+    const $dash = $('#cmp-dashboard');
+    if (!$dash.length) return;
+    const s = computeDashboardStats();
+    if (s.total === 0 && s.trashCount === 0) {
+        $dash.empty();
+        return;
+    }
+    const active = State.activeDashboardKey;
+    const cls = (k) => `cmp-dash-item${active === k ? ' cmp-dash-active' : ''}`;
+    $dash.html(`
+        <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashTotal'))}</span><span class="cmp-dash-value">${s.total}</span></div>
+        <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashSize'))}</span><span class="cmp-dash-value">${formatSize(s.totalKB)}</span></div>
+        <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span><span class="cmp-dash-value">${s.chars}</span></div>
+        <div class="${cls('zombie')}" data-dash="zombie"><span class="cmp-dash-label">${escapeHtml(t('dashZombie'))}</span><span class="cmp-dash-value">${s.zombieCount}</span></div>
+        <div class="${cls('checkpoint')}" data-dash="checkpoint"><span class="cmp-dash-label">${escapeHtml(t('dashBranch'))}</span><span class="cmp-dash-value">${s.branchCount}</span></div>
+        <div class="${cls('corrupt')}" data-dash="corrupt"><span class="cmp-dash-label">${escapeHtml(t('dashCorrupt'))}</span><span class="cmp-dash-value">${s.corruptCount}</span></div>
+        <div class="cmp-dash-item" data-dash="trash"><span class="cmp-dash-label">${escapeHtml(t('dashTrash'))}</span><span class="cmp-dash-value">${s.trashCount} <span style="opacity:0.7;font-weight:400;">(${formatSize(s.trashKB)})</span></span></div>
+        ${active ? `<button class="cmp-btn cmp-btn-xs" id="cmp-dash-clear">${escapeHtml(t('dashClearFilter'))}</button>` : ''}
+    `);
+}
+
+function updateDashboardActive() {
+    const $dash = $('#cmp-dashboard');
+    if (!$dash.length) return;
+    $dash.find('.cmp-dash-item').removeClass('cmp-dash-active');
+    if (State.activeDashboardKey) {
+        $dash.find(`.cmp-dash-item[data-dash="${State.activeDashboardKey}"]`).addClass('cmp-dash-active');
+    }
+    const hasActive = Boolean(State.activeDashboardKey);
+    if (hasActive && !$('#cmp-dash-clear').length) {
+        $dash.append(`<button class="cmp-btn cmp-btn-xs" id="cmp-dash-clear">${escapeHtml(t('dashClearFilter'))}</button>`);
+    } else if (!hasActive) {
+        $('#cmp-dash-clear').remove();
+    }
+}
+
+function renderSidebar() {
+    const $sb = $('#cmp-sidebar');
+    if (!$sb.length) return;
+    const groups = new Map();
+    for (const r of State.allRecords) {
+        if (!r.avatarFile) continue;
+        if (!groups.has(r.avatarFile)) {
+            groups.set(r.avatarFile, {
+                avatarFile: r.avatarFile,
+                avatarUrl: r.avatarUrl || buildSafeAvatarUrl(r.avatarFile),
+                charName: r.charName || r.avatarFile,
+                count: 0,
+                kb: 0
+            });
+        }
+        const g = groups.get(r.avatarFile);
+        g.count++;
+        g.kb += r.sizeKB || 0;
+    }
+    const list = Array.from(groups.values()).sort((a, b) => b.count - a.count);
+    const totalCount = State.allRecords.length;
+    const showSearch = list.length > 8;
+
+    let html = `
+        ${showSearch ? `<input type="text" id="cmp-sidebar-search" class="cmp-input" style="width:100%;margin-bottom:6px;font-size:0.82em;" placeholder="${escapeHtml(t('sidebarSearch'))}">` : ''}
+        <div class="cmp-sidebar-item ${State.selectedAvatar === null ? 'active' : ''}" data-avatar="__all__">
+            <div class="cmp-sidebar-info">
+                <div class="cmp-sidebar-name"><b>${escapeHtml(t('sidebarAll'))}</b></div>
+                <div class="cmp-sidebar-meta">${totalCount}</div>
+            </div>
+        </div>
+    `;
+    for (const g of list) {
+        html += `
+            <div class="cmp-sidebar-item ${State.selectedAvatar === g.avatarFile ? 'active' : ''}" data-avatar="${encodeURIComponent(g.avatarFile)}">
+                <img class="cmp-sidebar-avatar" src="${g.avatarUrl}" loading="lazy" onerror="this.src='/img/ai4.png'">
+                <div class="cmp-sidebar-info">
+                    <div class="cmp-sidebar-name">${escapeHtml(g.charName)}</div>
+                    <div class="cmp-sidebar-meta">${g.count} · ${formatSize(g.kb)}</div>
+                </div>
+            </div>
+        `;
+    }
+    $sb.html(html);
+}
+
+function updateSidebarActive() {
+    const $sb = $('#cmp-sidebar');
+    if (!$sb.length) return;
+    $sb.find('.cmp-sidebar-item').removeClass('active');
+    if (State.selectedAvatar === null) {
+        $sb.find('.cmp-sidebar-item[data-avatar="__all__"]').addClass('active');
+    } else {
+        const encoded = encodeURIComponent(State.selectedAvatar);
+        $sb.find(`.cmp-sidebar-item[data-avatar="${encoded}"]`).addClass('active');
+    }
+}
+
+function selectAvatar(avatarFile) {
+    if (State.selectedAvatar === avatarFile) {
+        State.selectedAvatar = null;
+    } else {
+        State.selectedAvatar = avatarFile;
+    }
+    applyFiltersAndRender(true);
+}
+
+function activateDashboardFilter(key) {
+    if (key === 'trash') {
+        $('.cmp-tab[data-tab="trash"]').trigger('click');
+        return;
+    }
+    if (State.activeDashboardKey === key) {
+        // toggle off
+        State.activeDashboardKey = null;
+        State.statusFilter = null;
+        $('#cmp-min-msg').val(0);
+        $('#cmp-max-msg').val('');
+        applyFiltersAndRender(true);
+        return;
+    }
+    State.activeDashboardKey = key;
+    State.statusFilter = null;
+    $('#cmp-min-msg').val(0);
+    $('#cmp-max-msg').val('');
+
+    if (key === 'zombie') {
+        $('#cmp-max-msg').val(1);
+    } else if (key === 'checkpoint') {
+        State.statusFilter = 'checkpoint';
+    } else if (key === 'corrupt') {
+        State.statusFilter = 'corrupted_large';
+    }
+    applyFiltersAndRender(true);
+}
+
+function clearDashboardFilter() {
+    State.activeDashboardKey = null;
+    State.statusFilter = null;
+    $('#cmp-min-msg').val(0);
+    $('#cmp-max-msg').val('');
+    applyFiltersAndRender(true);
 }
 
 function renderManagerTable() {
@@ -2310,7 +2523,7 @@ async function openManagerModal() {
                                         <input type="checkbox" id="cmp-include-unknown-time"> <span id="cmp-lbl-unknown-txt"></span>
                                     </label>
                                 </div>
-                                <div class="cmp-filter-row">
+                               <div class="cmp-filter-row">
                                     <span id="cmp-lbl-presets"></span>
                                     <button class="cmp-btn cmp-preset-btn" data-preset="zombie"></button>
                                     <button class="cmp-btn cmp-preset-btn" data-preset="short"></button>
@@ -2319,22 +2532,28 @@ async function openManagerModal() {
                             </div>
                         </div>
 
-                        <div class="cmp-body">
-                            <table class="cmp-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width:32px;"><input type="checkbox" id="cmp-select-all"></th>
-                                        <th id="cmp-th-avatar" style="width:46px;"></th>
-                                        <th id="cmp-th-char" style="width:140px;"></th>
-                                        <th id="cmp-th-file"></th>
-                                        <th id="cmp-th-msg" style="width:80px;"></th>
-                                        <th id="cmp-th-size" style="width:80px;"></th>
-                                        <th id="cmp-th-time" style="width:130px;"></th>
-                                        <th id="cmp-th-actions" style="width:105px;"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="cmp-tbody"></tbody>
-                            </table>
+                        <div id="cmp-dashboard" class="cmp-dashboard"></div>
+
+                        <div class="cmp-manager-main">
+                            <aside id="cmp-sidebar" class="cmp-sidebar"></aside>
+
+                            <div class="cmp-body">
+                                <table class="cmp-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:32px;"><input type="checkbox" id="cmp-select-all"></th>
+                                            <th id="cmp-th-avatar" style="width:46px;"></th>
+                                            <th id="cmp-th-char" style="width:140px;"></th>
+                                            <th id="cmp-th-file"></th>
+                                            <th id="cmp-th-msg" style="width:80px;"></th>
+                                            <th id="cmp-th-size" style="width:80px;"></th>
+                                            <th id="cmp-th-time" style="width:130px;"></th>
+                                            <th id="cmp-th-actions" style="width:105px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="cmp-tbody"></tbody>
+                                </table>
+                            </div>
                         </div>
 
                         <div class="cmp-footer">
@@ -2374,7 +2593,6 @@ async function openManagerModal() {
                             </table>
                         </div>
                     </div>
-
                     <!-- 面板 3：设置 -->
                     <div id="cmp-view-settings" class="cmp-view-panel" style="display:none;">
                         <div class="cmp-body">
@@ -2625,6 +2843,35 @@ function bindModalEvents() {
 
     $('#cmp-delete-btn').on('click', confirmAndDelete);
 
+    // 仪表盘 & 侧栏事件委托
+    $modal.on('click', '.cmp-dash-item', function () {
+        const key = $(this).data('dash');
+        if (key) activateDashboardFilter(key);
+    });
+    $modal.on('click', '#cmp-dash-clear', clearDashboardFilter);
+    $modal.on('click', '.cmp-sidebar-item', function () {
+        const encoded = $(this).data('avatar');
+        if (encoded === '__all__') {
+            if (State.selectedAvatar !== null) {
+                State.selectedAvatar = null;
+                applyFiltersAndRender(true);
+            }
+            return;
+        }
+        selectAvatar(decodeURIComponent(encoded));
+    });
+    $modal.on('input', '#cmp-sidebar-search', function () {
+        const kw = ($(this).val() || '').trim().toLowerCase();
+        $('#cmp-sidebar .cmp-sidebar-item').each(function () {
+            if ($(this).data('avatar') === '__all__') {
+                $(this).show();
+                return;
+            }
+            const name = $(this).find('.cmp-sidebar-name').text().toLowerCase();
+            $(this).toggle(!kw || name.includes(kw));
+        });
+    });
+    
     const debouncedTrashSearch = debounce(() => renderTrashTable(), 100);
     $('#cmp-trash-search').on('input', debouncedTrashSearch);
 
