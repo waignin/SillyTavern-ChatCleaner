@@ -4,7 +4,7 @@ import { characters, this_chid, getRequestHeaders } from '../../../../script.js'
 function getUserScopeKey() {
     try {
         const handle = window.currentUser?.handle || window.power_user?.handle || document.body?.dataset?.userHandle || 'default';
-        return String(handle).replace(/[^a-zA-Z0-9_-]/g, '_');
+        return encodeURIComponent(String(handle).trim() || 'default');
     } catch {
         return 'default';
     }
@@ -1016,9 +1016,16 @@ async function runIncrementalOrFullScan(forceFull = false) {
             setStatusUI(
                 100,
                 isEn()
-                    ? `Done: <b>${collected.length}</b> chats (Cache: ${cacheHits}, Empty: ${skippedEmpty}, Fetched: ${networkFetched}${errorCount ? `, Fallback: ${errorCount}` : ''})`
-                    : `完成：共 <b>${collected.length}</b> 份记录（缓存命中 ${cacheHits}，跳过空卡 ${skippedEmpty}，请求 ${networkFetched}${errorCount ? `，失败回退 ${errorCount}` : ''}）`
+                    ? `Done: <b>${collected.length}</b> chats (Cache: ${cacheHits}, Empty: ${skippedEmpty}, Fetched: ${networkFetched}${errorCount ? `, <span style="color:#fca5a5;">Fallback: ${errorCount}</span>` : ''})`
+                    : `完成：共 <b>${collected.length}</b> 份记录（缓存命中 ${cacheHits}，跳过空卡 ${skippedEmpty}，请求 ${networkFetched}${errorCount ? `，<span style="color:#fca5a5;">失败回退 ${errorCount}</span>` : ''}）`
             );
+            if (errorCount > 0) {
+                toastr.warning(
+                    isEn()
+                        ? `${errorCount} character(s) failed to fetch and fell back to cached data. Consider rescanning before cleanup.`
+                        : `有 ${errorCount} 张角色卡网络读取失败，已回退显示旧缓存数据。清理前建议重新扫描。`
+                );
+            }
             applyFiltersAndRender(false);
         }
     } catch (err) {
@@ -1898,7 +1905,14 @@ async function restoreFromTrash(trashId, forceRename = false, batchMode = false)
         });
 
         if (res.ok) {
-            await removeTrashRecord(trashId);
+            const cleaned = await removeTrashRecord(trashId);
+            if (!cleaned && !batchMode) {
+                toastr.warning(
+                    isEn()
+                        ? 'Chat restored, but old backup remains in Trash Bin. You may destroy it manually.'
+                        : '聊天已成功恢复，但回收站中的旧副本未能自动移除，您可手动销毁。'
+                );
+            }
             if (!batchMode) renderTrashTable();
 
             const rawFileName = `${targetChatFile}.jsonl`;
