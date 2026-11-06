@@ -96,7 +96,9 @@ const I18N = {
         thScale: '规模',
         thStatus: '状态',
         selectAllNormal: '全选普通项',
-        selectAllTip: '仅全选或取消普通记录，不会影响您手动勾选的慎删项',
+        selectAllForce: '再点全选(含慎删)',
+        selectAllCancel: '取消全选',
+        selectAllTip: '三态全选：第1次点击选普通项(横线)，第2次点击全选含慎删项(打勾)，第3次取消全选',
         waitingScan: '等待扫描...',
         deleteSelectedBtn: '清理选中项',
         trashSearchPlaceholder: '搜索回收站内的角色名 / 文件名...',
@@ -226,7 +228,9 @@ const I18N = {
         thScale: 'Scale',
         thStatus: 'Status',
         selectAllNormal: 'Select Normal',
-        selectAllTip: 'Select/Deselect normal items only (preserves manually checked high-risk items)',
+        selectAllForce: 'Select All (Incl. High-Risk)',
+        selectAllCancel: 'Deselect All',
+        selectAllTip: '3-State Select: 1st click selects normal (-), 2nd selects all including high-risk (✓), 3rd clears all',
         waitingScan: 'Waiting for scan...',
         deleteSelectedBtn: 'Clean Selected',
         trashSearchPlaceholder: 'Search character / file name in Trash...',
@@ -1226,7 +1230,6 @@ function applyFiltersAndRender(resetSelection = false) {
     renderManagerTable();
     updateDashboardActive();
     updateSidebarActive();
-    updateToggleCharsBtn();
 }
 function isMobileView() {
     return typeof window !== 'undefined' && window.innerWidth <= 700;
@@ -1235,7 +1238,6 @@ function isMobileView() {
 function toggleSidebar(forceState = null) {
     const $sb = $('#cmp-sidebar');
     const $backdrop = $('#cmp-sidebar-backdrop');
-    console.log('[ChatCleaner] toggleSidebar', { forceState, isMobile: isMobileView(), sbLen: $sb.length, backdropLen: $backdrop.length });
     if (!$sb.length) return;
 
     if (isMobileView()) {
@@ -1247,8 +1249,6 @@ function toggleSidebar(forceState = null) {
         const shouldCollapse = forceState !== null ? !forceState : !wasCollapsed;
         $sb.toggleClass('cmp-sidebar-collapsed', shouldCollapse);
         State.sidebarCollapsedDesktop = shouldCollapse;
-        updateToggleCharsBtn();
-        // 若桌面端点击「角色」展开侧栏，或侧栏本就处于展开状态，给侧栏脉冲高亮并聚焦搜索框以提供明确视觉反馈
         if (!shouldCollapse) {
             const $list = $sb.find('.cmp-sidebar-list');
             if ($list.length) $list.scrollTop(0);
@@ -1265,22 +1265,6 @@ function toggleSidebar(forceState = null) {
 function closeSidebarDrawer() {
     $('#cmp-sidebar').removeClass('open');
     $('#cmp-sidebar-backdrop').removeClass('open');
-}
-
-function updateToggleCharsBtn() {
-    const $btn = $('#cmp-toggle-chars-btn');
-    if (!$btn.length) return;
-    if (State.selectedAvatar === null) {
-        $btn.removeClass('cmp-btn-primary cmp-chars-btn-active');
-        $btn.html(`<i class="fa-solid fa-users"></i> <span>${escapeHtml(t('toggleCharsAll'))}</span>`);
-        $btn.attr('title', t('sidebarTitle'));
-    } else {
-        const rec = State.allRecords.find((r) => r.avatarFile === State.selectedAvatar);
-        const name = rec ? rec.charName : State.selectedAvatar;
-        $btn.addClass('cmp-btn-primary cmp-chars-btn-active');
-        $btn.html(`<i class="fa-solid fa-user"></i> <span>${escapeHtml(name)}</span> <span class="cmp-chars-clear-x" title="${escapeHtml(t('clearCharFilter'))}">✕</span>`);
-        $btn.attr('title', `${t('sidebarTitle')}: ${name}`);
-    }
 }
 
 
@@ -1315,21 +1299,42 @@ function computeDashboardStats() {
 
 function renderDashboard() {
     const $dash = $('#cmp-dashboard');
-    if (!$dash.length) return;
+    const $topStats = $('#cmp-toolbar-stats');
     const s = computeDashboardStats();
+
+    if ($topStats.length) {
+        if (s.total === 0 && s.trashCount === 0) {
+            $topStats.empty();
+        } else {
+            $topStats.html(`
+                <span class="cmp-stat-pill"><span class="cmp-dash-label">${escapeHtml(t('dashTotal'))}</span> <b class="cmp-dash-value">${s.total}</b></span>
+                <span class="cmp-stat-sep">·</span>
+                <span class="cmp-stat-pill"><span class="cmp-dash-label">${escapeHtml(t('dashSize'))}</span> <b class="cmp-dash-value">${formatSize(s.totalKB)}</b></span>
+            `);
+        }
+    }
+
+    if (!$dash.length) return;
     if (s.total === 0 && s.trashCount === 0) {
         $dash.empty();
         return;
     }
+
     const active = State.activeDashboardKey;
     const cls = (k) => `cmp-dash-item${active === k ? ' cmp-dash-active' : ''}`;
     const charsCls = `cmp-btn cmp-btn-xs cmp-dash-item cmp-dash-char-btn${State.selectedAvatar ? ' cmp-dash-active' : ''}`;
-    const selCharSuffix = State.selectedAvatar ? (isEn() ? ' (Filtered)' : ' (已选)') : '';
+    const rec = State.selectedAvatar ? State.allRecords.find((r) => r.avatarFile === State.selectedAvatar) : null;
+    const selCharLabel = rec ? ` · ${rec.charName}` : (State.selectedAvatar ? (isEn() ? ' (Filtered)' : ' (已选)') : '');
+    const clearXHtml = State.selectedAvatar ? `<span class="cmp-chars-clear-x" title="${escapeHtml(t('clearCharFilter'))}">✕</span>` : '';
     const showTrashBtn = State.settings.safeBackupMode || s.trashCount > 0;
+
     $dash.html(`
-        <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashTotal'))}</span><span class="cmp-dash-value">${s.total}</span></div>
-        <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashSize'))}</span><span class="cmp-dash-value">${formatSize(s.totalKB)}</span></div>
-        <button type="button" class="${charsCls}" data-dash="chars" title="${escapeHtml(t('sidebarTitle'))}"><i class="fa-solid fa-users" style="font-size:0.85em;"></i> <span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span><span class="cmp-dash-value" id="cmp-dash-chars-val" data-count="${s.chars}">${s.chars}${selCharSuffix}</span> <i class="fa-solid fa-bars-staggered" style="font-size:0.78em; opacity:0.8;"></i></button>
+        <button type="button" class="${charsCls}" data-dash="chars" title="${escapeHtml(t('sidebarTitle'))}">
+            <i class="fa-solid fa-users" style="font-size:0.85em;"></i>
+            <span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span>
+            <span class="cmp-dash-value" id="cmp-dash-chars-val" data-count="${s.chars}">${s.chars}${escapeHtml(selCharLabel)}</span>
+            ${clearXHtml}
+        </button>
         <div class="${cls('zombie')}" data-dash="zombie"><span class="cmp-dash-label">${escapeHtml(t('dashZombie'))}</span><span class="cmp-dash-value">${s.zombieCount}</span></div>
         <div class="${cls('checkpoint')}" data-dash="checkpoint"><span class="cmp-dash-label">${escapeHtml(t('dashBranch'))}</span><span class="cmp-dash-value">${s.branchCount}</span></div>
         <div class="${cls('corrupt')}" data-dash="corrupt"><span class="cmp-dash-label">${escapeHtml(t('dashCorrupt'))}</span><span class="cmp-dash-value">${s.corruptCount}</span></div>
@@ -1339,27 +1344,7 @@ function renderDashboard() {
 }
 
 function updateDashboardActive() {
-    const $dash = $('#cmp-dashboard');
-    if (!$dash.length) return;
-    $dash.find('.cmp-dash-item').removeClass('cmp-dash-active');
-    if (State.activeDashboardKey) {
-        $dash.find(`.cmp-dash-item[data-dash="${State.activeDashboardKey}"]`).addClass('cmp-dash-active');
-    }
-    if (State.selectedAvatar) {
-        $dash.find('.cmp-dash-item[data-dash="chars"]').addClass('cmp-dash-active');
-    }
-    const $charsVal = $('#cmp-dash-chars-val');
-    if ($charsVal.length) {
-        const baseCount = $charsVal.attr('data-count') || '';
-        const selCharSuffix = State.selectedAvatar ? (isEn() ? ' (Filtered)' : ' (已选)') : '';
-        $charsVal.text(`${baseCount}${selCharSuffix}`);
-    }
-    const hasActive = Boolean(State.activeDashboardKey || State.selectedAvatar);
-    if (hasActive && !$('#cmp-dash-clear').length) {
-        $dash.append(`<button class="cmp-btn cmp-btn-xs" id="cmp-dash-clear">${escapeHtml(t('dashClearFilter'))}</button>`);
-    } else if (!hasActive) {
-        $('#cmp-dash-clear').remove();
-    }
+    renderDashboard();
 }
 
 function renderSidebar() {
@@ -1538,10 +1523,85 @@ function renderManagerTable() {
     updateFooterSummary();
 }
 
+function getSelectAllState() {
+    const nonExempt = State.filteredRecords.filter((r) => !r.exempt);
+    if (nonExempt.length === 0) {
+        return { state: 'none', hasNormal: false, hasHighRisk: false, allNormalSelected: false, allNonExemptSelected: false };
+    }
+    const normalItems = nonExempt.filter((r) => !r.highRisk);
+    const highRiskItems = nonExempt.filter((r) => r.highRisk);
+    const hasNormal = normalItems.length > 0;
+    const hasHighRisk = highRiskItems.length > 0;
+
+    const allNormalSelected = hasNormal && normalItems.every((r) => State.selectedIds.has(r.id));
+    const allNonExemptSelected = nonExempt.every((r) => State.selectedIds.has(r.id));
+    const anySelected = nonExempt.some((r) => State.selectedIds.has(r.id));
+
+    let state = 'none';
+    if (allNonExemptSelected) {
+        state = 'all';
+    } else if (anySelected) {
+        state = 'partial';
+    }
+    return { state, hasNormal, hasHighRisk, allNormalSelected, allNonExemptSelected };
+}
+
 function syncSelectAllCheckbox() {
-    const safeSelectable = State.filteredRecords.filter((r) => !r.exempt && !r.highRisk);
-    const allSafeSelected = safeSelectable.length > 0 && safeSelectable.every((r) => State.selectedIds.has(r.id));
-    $('#cmp-select-all, #cmp-select-all-bottom').prop('checked', allSafeSelected);
+    const info = getSelectAllState();
+    const $boxes = $('#cmp-select-all, #cmp-select-all-bottom');
+    const $lbl = $('#cmp-select-all-label');
+
+    if (info.state === 'all') {
+        $boxes.prop('checked', true).prop('indeterminate', false);
+        $lbl.text(t('selectAllCancel'));
+    } else if (info.state === 'partial') {
+        $boxes.prop('checked', false).prop('indeterminate', true);
+        $lbl.text(info.hasHighRisk ? t('selectAllForce') : t('selectAllCancel'));
+    } else {
+        $boxes.prop('checked', false).prop('indeterminate', false);
+        $lbl.text(info.hasNormal ? t('selectAllNormal') : t('selectAllForce'));
+    }
+}
+
+function handleSelectAllCycle() {
+    const nonExempt = State.filteredRecords.filter((r) => !r.exempt);
+    if (nonExempt.length === 0) {
+        syncSelectAllCheckbox();
+        return;
+    }
+
+    const normalItems = nonExempt.filter((r) => !r.highRisk);
+    const highRiskItems = nonExempt.filter((r) => r.highRisk);
+    const hasNormal = normalItems.length > 0;
+    const hasHighRisk = highRiskItems.length > 0;
+
+    const allNormalSelected = hasNormal && normalItems.every((r) => State.selectedIds.has(r.id));
+    const allNonExemptSelected = nonExempt.every((r) => State.selectedIds.has(r.id));
+
+    if (allNonExemptSelected) {
+        // 第 3 次点击（当前已全部选中）：清空当前筛选列表中的所有选中项，恢复空白
+        for (const r of nonExempt) {
+            State.selectedIds.delete(r.id);
+            State.manualHighRiskIds.delete(r.id);
+        }
+    } else if (!hasNormal || allNormalSelected) {
+        // 第 2 次点击（普通项已全选，或当前列表全是慎删项无普通项）：选中全部普通项 + 慎删项，直接打勾
+        for (const r of nonExempt) {
+            State.selectedIds.add(r.id);
+            if (r.highRisk) State.manualHighRiskIds.add(r.id);
+        }
+    } else {
+        // 第 1 次点击（普通项尚未全选）：仅全选普通项，跳过慎删项（若列表无慎删项则自动变为全选打勾，否则为半选横线）
+        for (const r of normalItems) {
+            State.selectedIds.add(r.id);
+        }
+        for (const r of highRiskItems) {
+            State.selectedIds.delete(r.id);
+            State.manualHighRiskIds.delete(r.id);
+        }
+    }
+
+    renderManagerTable();
 }
 
 function updateFooterSummary() {
@@ -2550,7 +2610,6 @@ function applyLanguageToDOM() {
 
     $('#cmp-app-title').text(t('appTitle'));
     $('#cmp-sidebar-header-title').text(t('sidebarTitle'));
-    updateToggleCharsBtn();
     $('#cmp-help-btn').attr('title', t('helpTip'));
     $('#cmp-lang-toggle-top').text(isEn() ? '🌐 中文' : '🌐 EN');
     $('#cmp-reset-ui-top, #cmp-reset-ui-settings').text(t('resetUiBtn')).attr('title', t('resetUiTip'));
@@ -2750,10 +2809,10 @@ async function openManagerModal() {
                                     <option value="time_asc"></option>
                                     <option value="name_asc"></option>
                                 </select>
-                                <button id="cmp-toggle-chars-btn" class="cmp-btn"></button>
                                 <button id="cmp-toggle-drawer-btn" class="cmp-btn"></button>
                                 <button id="cmp-scan-inc-btn" class="cmp-btn cmp-btn-primary"></button>
                                 <button id="cmp-scan-full-btn" class="cmp-btn"></button>
+                                <div id="cmp-toolbar-stats" class="cmp-toolbar-stats"></div>
                             </div>
 
                             <div id="cmp-toolbar-drawer" class="cmp-toolbar-drawer ${State.drawerOpen ? 'open' : ''}">
@@ -3058,16 +3117,7 @@ function bindModalEvents() {
     });
 
     $('#cmp-select-all, #cmp-select-all-bottom').on('change', function () {
-        const ck = this.checked;
-        for (const r of State.filteredRecords) {
-            if (r.exempt || r.highRisk) continue;
-            if (ck) {
-                State.selectedIds.add(r.id);
-            } else {
-                State.selectedIds.delete(r.id);
-            }
-        }
-        renderManagerTable();
+        handleSelectAllCycle();
     });
 
     $modal.on('change', '.cmp-row-check', function () {
@@ -3095,7 +3145,12 @@ function bindModalEvents() {
     $('#cmp-delete-btn').on('click', confirmAndDelete);
 
     // 仪表盘 & 侧栏事件委托
-    $modal.on('click', '.cmp-dash-item', function () {
+    $modal.on('click', '.cmp-dash-item', function (e) {
+        if ($(e.target).closest('.cmp-chars-clear-x').length) {
+            e.stopPropagation();
+            selectAvatar(null);
+            return;
+        }
         const key = $(this).data('dash');
         if (key) activateDashboardFilter(key);
     });
@@ -3140,18 +3195,10 @@ function bindModalEvents() {
         if (!isMobileView()) return;
         const $sb = $('#cmp-sidebar');
         if (!$sb.hasClass('open')) return;
-        if ($(e.target).closest('#cmp-sidebar, #cmp-toggle-chars-btn, .cmp-dash-item[data-dash="chars"]').length) {
+        if ($(e.target).closest('#cmp-sidebar, .cmp-dash-item[data-dash="chars"]').length) {
             return;
         }
         closeSidebarDrawer();
-    });
-    $('#cmp-toggle-chars-btn').on('click', function (e) {
-        if ($(e.target).closest('.cmp-chars-clear-x').length) {
-            e.stopPropagation();
-            selectAvatar(null);
-            return;
-        }
-        toggleSidebar();
     });
     $(window).off('resize.cmpResponsive').on('resize.cmpResponsive', debounce(() => {
         if (!isMobileView()) {
@@ -3397,6 +3444,7 @@ function bindModalEvents() {
     $('#cmp-set-backup').on('change', function () {
         if (this.checked) {
             saveSettings({ ...State.settings, safeBackupMode: true });
+            renderDashboard();
             return;
         }
         this.checked = true;
@@ -3414,6 +3462,7 @@ function bindModalEvents() {
                         closeSubModal();
                         $('#cmp-set-backup').prop('checked', false);
                         saveSettings({ ...State.settings, safeBackupMode: false });
+                        renderDashboard();
                     }
                 }
             ]
