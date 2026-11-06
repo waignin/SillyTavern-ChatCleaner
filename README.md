@@ -28,7 +28,7 @@
 
 ### 📦 安装方法
 
-1. 在 SillyTavern 中，点击顶栏的 **扩展 (Extensions)** 图标（魔方）。
+1. 在 SillyTavern 中，点击**顶部工具栏**的 **扩展 (Extensions)** 图标（立方体）。
 2. 选择 **安装扩展 (Install Extension)**。
 3. 粘贴本仓库 URL：`https://github.com/waignin/SillyTavern-ChatCleaner`
 4. 点击 **安装 (Install)** 并刷新页面。
@@ -38,7 +38,7 @@
 
 ### 🚀 使用指南
 
-1. 点击 SillyTavern 顶栏的 **🪄 魔法棒** 菜单，选择 **聊天记录管理 / Chat Cleaner**。
+1. 点击 SillyTavern **底部工具栏**的 **🪄 魔法棒** 菜单，选择 **聊天记录管理 / Chat Cleaner**。
 2. 使用过滤面板（默认展开），按 **消息数量**（如 `0 ~ 1`）、**文件大小 (KB)** 或 **未活跃天数** 进行筛选，或直接点击快捷预设（如 **≤ 1 条消息**）。
 3. 点击任意行的 **预览** 检查内容，或点击 **导出** 将 `.jsonl` 备份下载到本地。
 4. 点击 **清理选中项**。被删除的文件将保留在 **回收站** 标签页中（默认 60 分钟，可配置），你可随时还原、导出或将其锁定以防自动过期。
@@ -74,7 +74,7 @@ Over time, SillyTavern users accumulate hundreds or thousands of 1-message "gree
 
 ### 📦 Installation
 
-1. In SillyTavern, open **Extensions** (top bar cubes icon).
+1. In SillyTavern, open **Extensions** (top toolbar cubes icon).
 2. Select **Install Extension**.
 3. Paste the repository URL: `https://github.com/waignin/SillyTavern-ChatCleaner`
 4. Click **Install** and refresh the page.
@@ -84,7 +84,7 @@ Over time, SillyTavern users accumulate hundreds or thousands of 1-message "gree
 
 ### 🚀 Usage
 
-1. Click the **🪄 Magic Wand** menu on the SillyTavern top bar and select **Chat Cleaner**.
+1. Click the **🪄 Magic Wand** menu in the **bottom toolbar** and select **Chat Cleaner**.
 2. Use the filter drawer to filter by **Message Count** (e.g., `0 ~ 1`), **File Size (KB)**, or **Inactive Days**, or click a quick preset like **≤ 1 Msg**.
 3. Click **Preview** on any row to inspect floors, or **Export** to download a `.jsonl` backup.
 4. Click **Clean Selected**. Deleted files are kept in the **Trash Bin** tab (default 60 mins, configurable), where they can be restored, exported, or locked.
