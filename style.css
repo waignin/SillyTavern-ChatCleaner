@@ -279,6 +279,28 @@
     gap: 8px;
 }
 
+.cmp-toolbar-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    font-size: 0.75em;
+    color: var(--cmp-text-sub) !important;
+    white-space: nowrap;
+    padding: 2px 4px;
+    user-select: none;
+}
+
+.cmp-stat-pill {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.cmp-stat-sep {
+    opacity: 0.45;
+}
+
 .cmp-toolbar-main {
     display: flex;
     gap: 6px;
