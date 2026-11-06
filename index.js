@@ -1038,6 +1038,8 @@ async function runIncrementalOrFullScan(forceFull = false) {
                         : `扫描已手动停止（已加载部分记录 ${collected.length} 份）。`
                 );
                 applyFiltersAndRender(false);
+                renderDashboard();
+                renderSidebar();
             }
         } else {
             for (const cachedAvatar of cacheMap.keys()) {
@@ -1062,6 +1064,8 @@ async function runIncrementalOrFullScan(forceFull = false) {
                 );
             }
             applyFiltersAndRender(false);
+            renderDashboard();
+            renderSidebar();
         }
     } catch (err) {
         console.error('[ChatCleaner] Scan error:', err);
@@ -1479,6 +1483,21 @@ async function openLightweightPreview(recordId) {
                 listToRender = messages.map((m, i) => ({ m, idx: i + 1 }));
             }
 
+            const branchCount = State.parentBranchCounts.get(`${rec.avatarFile}::${rec.chatFile}`) || 0;
+            const statusText = rec.exempt ? t('previewMetaStatusActive')
+                : rec.reason === 'parent_chat' ? t('previewMetaStatusParent', { n: branchCount })
+                : rec.reason === 'checkpoint' ? t('previewMetaStatusCheckpoint')
+                : rec.reason === 'backup' ? t('previewMetaStatusBackup')
+                : rec.reason === 'corrupted_large' ? t('previewMetaStatusCorrupt')
+                : t('previewMetaStatusNormal');
+            const metaBar = `
+                <div class="cmp-preview-meta-bar">
+                    <div><b>${escapeHtml(rec.rawFileName)}</b></div>
+                    <div>${escapeHtml(t('thMsg'))}: <b>${rec.msgCount}</b> · ${escapeHtml(t('thSize'))}: <b>${formatSize(rec.sizeKB)}</b> · ${escapeHtml(t('thTime'))}: <b>${formatTime(rec.lastTime)}</b></div>
+                    <div>${escapeHtml(t('thStatus'))}: <b>${escapeHtml(statusText)}</b></div>
+                </div>
+            `;
+
             let html = `
                 <div class="cmp-preview-toolbar">
                     <div style="font-size:0.84em; color:var(--cmp-text-sub) !important; word-break:break-all;">
@@ -1493,6 +1512,7 @@ async function openLightweightPreview(recordId) {
                         <button id="cmp-pv-jump-bottom" class="cmp-btn cmp-btn-xs cmp-btn-primary">${isEn() ? '↓ Last' : '↓ 最后一楼'}</button>
                     </div>
                 </div>
+                ${metaBar}
                 <div class="cmp-preview-list">
             `;
 
@@ -1939,6 +1959,8 @@ async function executeBatchDelete(targets) {
         updateControlButtons();
         syncSelectAllCheckbox();
         updateFooterSummary();
+        renderDashboard();
+        renderSidebar();
     }
 
     const freedStr = formatSize(freedKB);
@@ -2154,6 +2176,8 @@ async function restoreFromTrash(trashId, forceRename = false, batchMode = false)
 
             if (!batchMode) {
                 applyFiltersAndRender(false);
+                renderDashboard();
+                renderSidebar();
                 toastr.success(`${isEn() ? 'Restored: ' : '已恢复: '}${escapeHtml(meta.charName)} - ${escapeHtml(targetChatFile)}`);
             }
             return true;
@@ -2399,6 +2423,9 @@ function applyLanguageToDOM() {
     updateRetentionStatusHint();
 
     applyFiltersAndRender(false);
+    renderDashboard();
+    renderSidebar();
+    updateSidebarActive();
     if (State.activeTab === 'trash') renderTrashTable();
 }
 
@@ -2438,6 +2465,8 @@ async function openManagerModal() {
             runIncrementalOrFullScan(false);
         } else if (State.taskStatus === 'idle') {
             applyFiltersAndRender(false);
+            renderDashboard();
+            renderSidebar();
         }
         return;
     }
