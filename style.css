@@ -223,6 +223,19 @@
     background: var(--cmp-bg-input) !important;
     border-bottom: 1px solid var(--cmp-border);
     flex-shrink: 0;
+    max-height: 60px;
+    opacity: 1;
+    overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease, border-bottom-width 0.3s ease;
+}
+
+.cmp-status-bar.cmp-status-hidden {
+    max-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    border-bottom-width: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 .cmp-status-top {
@@ -718,18 +731,39 @@
 .cmp-dash-cell {
     display: flex;
     align-items: baseline;
-    gap: 6px;
-    padding: 4px 6px 4px 2px;
+    gap: 4px;
+    padding: 2px 6px 2px 2px;
     background: transparent;
-    border: 1px solid transparent;
-    font-size: 0.84em;
+    border: none;
+    font-size: 0.72em;
+    opacity: 0.82;
     user-select: none;
 }
 
 .cmp-dash-cell + .cmp-dash-cell {
-    padding-left: 10px;
+    padding-left: 8px;
     border-left: 1px solid var(--cmp-border);
     border-radius: 0;
+}
+
+.cmp-dash-char-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px !important;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.14) !important;
+    border: 1px solid rgba(59, 130, 246, 0.5) !important;
+    color: var(--cmp-text-main) !important;
+    font-size: 0.84em !important;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.cmp-dash-char-btn:hover {
+    background: rgba(59, 130, 246, 0.26) !important;
+    border-color: var(--cmp-accent) !important;
 }
 
 .cmp-dash-item {
@@ -1002,7 +1036,11 @@
         padding: 6px 10px;
     }
 
-    .cmp-dash-cell,
+    .cmp-dash-cell {
+        font-size: 0.68em;
+        padding: 2px 5px 2px 0;
+    }
+
     .cmp-dash-item {
         font-size: 0.78em;
         padding: 3px 8px;
