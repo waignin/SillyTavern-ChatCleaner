@@ -1,32 +1,5 @@
 import { characters, this_chid, getRequestHeaders } from '../../../../script.js';
 
-// 动态拉取 manifest.json 中的版本号，保证界面与扩展元数据完全统一
-let appVersion = '1.2.0';
-
-async function loadManifestVersion() {
-    try {
-        const manifestUrl = new URL('manifest.json', import.meta.url).href;
-        const res = await fetch(manifestUrl, { cache: 'no-cache' });
-        if (res.ok) {
-            const data = await res.json();
-            if (data && data.version) {
-                appVersion = String(data.version).trim();
-                console.log('[ChatCleaner] manifest loaded:', appVersion);
-                updateAppTitleUI();
-            }
-        }
-    } catch (e) {
-        console.warn('[ChatCleaner] Failed to load manifest.json version:', e);
-    }
-}
-
-function updateAppTitleUI() {
-    const $title = $('#cmp-app-title');
-    if (!$title.length) return;
-    const title = t('appTitle', { version: appVersion });
-    $title.text(title);
-}
-
 // 自动识别 SillyTavern 多用户标识，实现多账号数据隔离（单用户模式下平滑兼容）
 function getUserScopeKey() {
     try {
@@ -72,7 +45,7 @@ const I18N = {
     zh: {
         menuBtn: '聊天记录管理',
         menuTitle: '打开聊天记录管理器',
-        appTitle: '聊天记录管理器 v{version}',
+        appTitle: '聊天记录管理器',
         sidebarTitle: '全部角色',
         toggleCharsBtn: '角色卡',
         toggleCharsAll: '全部角色',
@@ -202,7 +175,7 @@ const I18N = {
     en: {
         menuBtn: 'Chat Cleaner',
         menuTitle: 'Open Chat Cleaner & Manager',
-        appTitle: 'Chat Cleaner & Manager v{version}',
+        appTitle: 'Chat Cleaner & Manager',
         sidebarTitle: 'All Characters',
         toggleCharsBtn: 'Characters',
         toggleCharsAll: 'All Characters',
@@ -440,13 +413,24 @@ function updateTrashTabVisibility() {
     $('#cmp-tab-trash-label').text(t('tabTrash', { time: getRetentionLabelText() }));
     const $trashTab = $('.cmp-tab[data-tab="trash"]');
     if (!$trashTab.length) return;
-    if (!State.settings.safeBackupMode && State.trashMetaList.length === 0) {
+    const hideTrash = !State.settings.safeBackupMode && State.trashMetaList.length === 0;
+    if (hideTrash) {
         $trashTab.hide();
         if (State.activeTab === 'trash') {
             $('.cmp-tab[data-tab="manager"]').trigger('click');
         }
     } else {
         $trashTab.show();
+    }
+
+    // 3. 同步更新首页仪表盘中的「回收站」胶囊按钮显隐状态
+    const $dashTrash = $('#cmp-dashboard [data-dash="trash"]');
+    if ($dashTrash.length) {
+        if (hideTrash) {
+            $dashTrash.hide();
+        } else {
+            $dashTrash.show();
+        }
     }
 }
 
@@ -622,8 +606,11 @@ async function purgeExpiredTrash() {
             State.trashMetaList = freshMetas.sort((a, b) => b.deletedAt - a.deletedAt);
             $('#cmp-trash-badge').text(State.trashMetaList.length);
             updateTrashTabVisibility();
-            if (changed && State.activeTab === 'trash' && $('#cmp-overlay').is(':visible')) {
-                renderTrashTable();
+            if ($('#cmp-overlay').is(':visible')) {
+                renderDashboard();
+                if (changed && State.activeTab === 'trash') {
+                    renderTrashTable();
+                }
             }
         }
     } catch (e) {
@@ -895,9 +882,28 @@ function refreshAllRecordsProtection() {
     }
 }
 
-function setStatusUI(pct, htmlText) {
+let statusAutoHideTimer = null;
+
+function setStatusUI(pct, htmlText, autoHideMs = 0) {
+    if (statusAutoHideTimer) {
+        clearTimeout(statusAutoHideTimer);
+        statusAutoHideTimer = null;
+    }
+    const $bar = $('.cmp-status-bar');
+    if ($bar.length) {
+        $bar.removeClass('cmp-status-hidden');
+    }
     $('#cmp-progress-fill').css('width', `${pct}%`);
     $('#cmp-status-text').html(htmlText);
+
+    if (autoHideMs > 0) {
+        statusAutoHideTimer = setTimeout(() => {
+            if (State.taskStatus === 'idle') {
+                $('.cmp-status-bar').addClass('cmp-status-hidden');
+            }
+            statusAutoHideTimer = null;
+        }, autoHideMs);
+    }
 }
 
 // ============================================================================
@@ -1105,7 +1111,8 @@ async function runIncrementalOrFullScan(forceFull = false) {
                     0,
                     isEn()
                         ? `Scan stopped. Retained existing ${State.allRecords.length} records.`
-                        : `扫描已手动终止，已保留原有的 ${State.allRecords.length} 份完整列表。`
+                        : `扫描已手动终止，已保留原有的 ${State.allRecords.length} 份完整列表。`,
+                    3500
                 );
                 toastr.info(isEn() ? 'Scan aborted. Existing list retained.' : '扫描已终止，保留原有列表数据');
             } else {
@@ -1114,7 +1121,8 @@ async function runIncrementalOrFullScan(forceFull = false) {
                     0,
                     isEn()
                         ? `Scan stopped (${collected.length} partial records loaded).`
-                        : `扫描已手动停止（已加载部分记录 ${collected.length} 份）。`
+                        : `扫描已手动停止（已加载部分记录 ${collected.length} 份）。`,
+                    3500
                 );
                 applyFiltersAndRender(false);
                 renderDashboard();
@@ -1133,7 +1141,8 @@ async function runIncrementalOrFullScan(forceFull = false) {
                 100,
                 isEn()
                     ? `Done: <b>${collected.length}</b> chats (Cache: ${cacheHits}, Empty: ${skippedEmpty}, Fetched: ${networkFetched}${errorCount ? `, <span style="color:#fca5a5;">Fallback: ${errorCount}</span>` : ''})`
-                    : `完成：共 <b>${collected.length}</b> 份记录（缓存命中 ${cacheHits}，跳过空卡 ${skippedEmpty}，请求 ${networkFetched}${errorCount ? `，<span style="color:#fca5a5;">失败回退 ${errorCount}</span>` : ''}）`
+                    : `完成：共 <b>${collected.length}</b> 份记录（缓存命中 ${cacheHits}，跳过空卡 ${skippedEmpty}，请求 ${networkFetched}${errorCount ? `，<span style="color:#fca5a5;">失败回退 ${errorCount}</span>` : ''}）`,
+                3500
             );
             if (errorCount > 0) {
                 toastr.warning(
@@ -1314,17 +1323,18 @@ function renderDashboard() {
     }
     const active = State.activeDashboardKey;
     const cls = (k) => `cmp-dash-item${active === k ? ' cmp-dash-active' : ''}`;
-    const charsCls = `cmp-dash-item${State.selectedAvatar ? ' cmp-dash-active' : ''}`;
+    const charsCls = `cmp-btn cmp-btn-xs cmp-dash-item cmp-dash-char-btn${State.selectedAvatar ? ' cmp-dash-active' : ''}`;
     const selCharSuffix = State.selectedAvatar ? (isEn() ? ' (Filtered)' : ' (已选)') : '';
+    const showTrashBtn = State.settings.safeBackupMode || s.trashCount > 0;
     $dash.html(`
         <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashTotal'))}</span><span class="cmp-dash-value">${s.total}</span></div>
         <div class="cmp-dash-cell"><span class="cmp-dash-label">${escapeHtml(t('dashSize'))}</span><span class="cmp-dash-value">${formatSize(s.totalKB)}</span></div>
-        <div class="${charsCls}" data-dash="chars" title="${escapeHtml(t('sidebarTitle'))}"><span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span><span class="cmp-dash-value" id="cmp-dash-chars-val" data-count="${s.chars}">${s.chars}${selCharSuffix}</span></div>
+        <button type="button" class="${charsCls}" data-dash="chars" title="${escapeHtml(t('sidebarTitle'))}"><i class="fa-solid fa-users" style="font-size:0.85em;"></i> <span class="cmp-dash-label">${escapeHtml(t('dashChars'))}</span><span class="cmp-dash-value" id="cmp-dash-chars-val" data-count="${s.chars}">${s.chars}${selCharSuffix}</span> <i class="fa-solid fa-bars-staggered" style="font-size:0.78em; opacity:0.8;"></i></button>
         <div class="${cls('zombie')}" data-dash="zombie"><span class="cmp-dash-label">${escapeHtml(t('dashZombie'))}</span><span class="cmp-dash-value">${s.zombieCount}</span></div>
         <div class="${cls('checkpoint')}" data-dash="checkpoint"><span class="cmp-dash-label">${escapeHtml(t('dashBranch'))}</span><span class="cmp-dash-value">${s.branchCount}</span></div>
         <div class="${cls('corrupt')}" data-dash="corrupt"><span class="cmp-dash-label">${escapeHtml(t('dashCorrupt'))}</span><span class="cmp-dash-value">${s.corruptCount}</span></div>
-        <div class="cmp-dash-item" data-dash="trash"><span class="cmp-dash-label">${escapeHtml(t('dashTrash'))}</span><span class="cmp-dash-value">${s.trashCount} <span style="opacity:0.7;font-weight:400;">(${formatSize(s.trashKB)})</span></span></div>
-        ${active || State.selectedAvatar ? `<button class="cmp-btn cmp-btn-xs" id="cmp-dash-clear">${escapeHtml(t('dashClearFilter'))}</button>` : ''}
+        ${showTrashBtn ? `<div class="cmp-dash-item" data-dash="trash"><span class="cmp-dash-label">${escapeHtml(t('dashTrash'))}</span><span class="cmp-dash-value">${s.trashCount} <span style="opacity:0.7;font-weight:400;">(${formatSize(s.trashKB)})</span></span></div>` : ''}
+        ${active || State.selectedAvatar ? `<button type="button" class="cmp-btn cmp-btn-xs" id="cmp-dash-clear">${escapeHtml(t('dashClearFilter'))}</button>` : ''}
     `);
 }
 
@@ -1437,12 +1447,7 @@ function activateDashboardFilter(key) {
         return;
     }
     if (key === 'chars') {
-        console.log('[ChatCleaner] chars clicked, isMobile:', isMobileView());
-        if (isMobileView()) {
-            toggleSidebar();
-        } else {
-            toggleSidebar(true);
-        }
+        toggleSidebar();
         return;
     }
     if (State.activeDashboardKey === key) {
@@ -2209,7 +2214,8 @@ async function executeBatchDelete(targets) {
         100,
         isEn()
             ? `Cleanup complete: Deleted <b>${deletedCount}</b> (${freedStr})${totalSkipped > 0 ? `, Safely skipped <b>${totalSkipped}</b>` : ''}`
-            : `清理完成：已删除 <b>${deletedCount}</b> 项 (${freedStr})${totalSkipped > 0 ? `，安全跳过 <b>${totalSkipped}</b> 项` : ''}`
+            : `清理完成：已删除 <b>${deletedCount}</b> 项 (${freedStr})${totalSkipped > 0 ? `，安全跳过 <b>${totalSkipped}</b> 项` : ''}`,
+        4000
     );
     if (deletedCount > 0) {
         toastr.success(isEn() ? `Cleaned ${deletedCount} chats, freed ${freedStr}` : `已清理 ${deletedCount} 份记录，释放 ${freedStr}`);
@@ -2516,7 +2522,7 @@ function openHelpModal() {
         `;
 
     showSubModal(
-        isEn() ? `About Chat Cleaner & Manager v${appVersion}` : `关于聊天记录管理器 v${appVersion}`,
+        isEn() ? 'About Chat Cleaner & Manager' : '关于聊天记录管理器',
         docHtml,
         [{ text: isEn() ? 'Close' : '关闭', className: 'cmp-btn cmp-btn-primary', onClick: closeSubModal }]
     );
@@ -2542,7 +2548,7 @@ function applyLanguageToDOM() {
 
     if (!$('#cmp-overlay').length) return;
 
-    updateAppTitleUI();
+    $('#cmp-app-title').text(t('appTitle'));
     $('#cmp-sidebar-header-title').text(t('sidebarTitle'));
     updateToggleCharsBtn();
     $('#cmp-help-btn').attr('title', t('helpTip'));
@@ -2555,7 +2561,7 @@ function applyLanguageToDOM() {
     $('.cmp-tab[data-tab="settings"]').text(t('tabSettings'));
 
     updateControlButtons();
-    if (State.taskStatus === 'idle') {
+    if (State.taskStatus === 'idle' && !State.hasInitialLoaded) {
         $('#cmp-status-text').text(t('statusReady'));
     }
 
@@ -2650,9 +2656,10 @@ function toggleLanguage() {
 
 function updateControlButtons() {
     const st = State.taskStatus;
-    const isBusy = st !== 'idle';
+    const isDeleting = st === 'deleting' || (st === 'paused' && State.prevStatus === 'deleting');
 
-    $('#cmp-set-verify, #cmp-set-backup, #cmp-set-retention-mins, #cmp-set-large-warn, #cmp-set-large-kb, #cmp-set-branch-prot, #cmp-set-concurrency, #cmp-reset-ui-top, #cmp-reset-ui-settings').prop('disabled', isBusy);
+    // 仅在执行批量删除任务时锁定删除安全锁相关设置；检索扫描期间所有外观、筛选阈值、并发数与安全开关均可随时调整
+    $('#cmp-set-verify, #cmp-set-backup').prop('disabled', isDeleting);
 
     if (st === 'idle') {
         $('#cmp-pause-btn, #cmp-stop-btn').hide();
@@ -3211,6 +3218,7 @@ function bindModalEvents() {
                             return;
                         }
                         renderTrashTable();
+                        renderDashboard();
                     }
                 }
             ]
@@ -3231,12 +3239,15 @@ function bindModalEvents() {
         }
         renderTrashTable();
         applyFiltersAndRender(false);
+        renderDashboard();
+        renderSidebar();
         const failed = snapshot.length - restored;
         setStatusUI(
             100,
             isEn()
                 ? `Batch restore done: <b>${restored}</b>/${snapshot.length} restored`
-                : `批量恢复完成：已成功恢复 <b>${restored}</b>/${snapshot.length} 份记录`
+                : `批量恢复完成：已成功恢复 <b>${restored}</b>/${snapshot.length} 份记录`,
+            3500
         );
         if (failed > 0) {
             toastr.warning(
@@ -3283,6 +3294,7 @@ function bindModalEvents() {
                         $('#cmp-trash-badge').text(State.trashMetaList.length);
                         updateTrashTabVisibility();
                         renderTrashTable();
+                        renderDashboard();
                         toastr.success(isEn() ? `Destroyed ${unlocked.length} unlocked backups` : `已永久销毁 ${unlocked.length} 条未加锁记录`);
                     }
                 }
@@ -3424,6 +3436,5 @@ jQuery(() => {
     }
 
     $(document).off('click.cmpOpen', '#cmp_open_btn').on('click.cmpOpen', '#cmp_open_btn', openManagerModal);
-    loadManifestVersion();
     purgeExpiredTrash();
 });
