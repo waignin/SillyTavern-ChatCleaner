@@ -34,7 +34,7 @@
 4. 点击 **安装 (Install)** 并刷新页面。
 
 > **手动安装**：若使用 `git clone`，请将文件夹放置在 `SillyTavern/public/scripts/extensions/third-party/SillyTavern-ChatCleaner/` 下。需要 **SillyTavern 1.17.0+** (推荐)。  
-> **锁定特定版本**：可在 URL 后追加标签，例如 `https://github.com/waignin/SillyTavern-ChatCleaner#v1.1.0`。
+
 
 ### 🚀 使用指南
 
@@ -80,7 +80,6 @@ Over time, SillyTavern users accumulate hundreds or thousands of 1-message "gree
 4. Click **Install** and refresh the page.
 
 > **Manual Installation**: If installing via `git clone`, place the folder under `SillyTavern/public/scripts/extensions/third-party/SillyTavern-ChatCleaner/`. Requires **SillyTavern 1.17.0+** (recommended).  
-> **Pin a specific version**: Append a tag to the URL, e.g., `https://github.com/waignin/SillyTavern-ChatCleaner#v1.1.0`.
 
 ### 🚀 Usage
 
