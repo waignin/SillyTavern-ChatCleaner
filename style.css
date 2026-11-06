@@ -695,3 +695,158 @@
         margin-top: 4px;
     }
 }
+
+/* ========== Manager 增强：仪表盘 / 侧栏 / 预览元信息 ========== */
+
+.cmp-dashboard {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--cmp-bg-panel) !important;
+    border-bottom: 1px solid var(--cmp-border);
+    flex-shrink: 0;
+}
+
+.cmp-dash-cell,
+.cmp-dash-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--cmp-bg-input);
+    border: 1px solid var(--cmp-border);
+    font-size: 0.84em;
+}
+
+.cmp-dash-label {
+    color: var(--cmp-text-sub) !important;
+    font-size: 0.9em;
+}
+
+.cmp-dash-value {
+    color: var(--cmp-text-main) !important;
+    font-weight: 700;
+}
+
+.cmp-dash-item {
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.cmp-dash-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.cmp-dash-item.cmp-dash-active {
+    background: rgba(59, 130, 246, 0.22);
+    border-color: var(--cmp-accent);
+}
+
+.cmp-manager-main {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.cmp-sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    background: var(--cmp-bg-panel) !important;
+    border-right: 1px solid var(--cmp-border);
+    padding: 6px;
+}
+
+.cmp-sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 2px;
+    border: 1px solid transparent;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.cmp-sidebar-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.cmp-sidebar-item.active {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: var(--cmp-accent);
+}
+
+.cmp-sidebar-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--cmp-border);
+    flex-shrink: 0;
+}
+
+.cmp-sidebar-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.cmp-sidebar-name {
+    font-size: 0.86em;
+    font-weight: 600;
+    color: var(--cmp-text-main) !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cmp-sidebar-meta {
+    font-size: 0.76em;
+    color: var(--cmp-text-sub) !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cmp-preview-meta-bar {
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--cmp-border);
+    border-radius: 8px;
+    background: var(--cmp-bg-panel) !important;
+    font-size: 0.82em;
+    color: var(--cmp-text-sub) !important;
+    line-height: 1.6;
+    word-break: break-word;
+}
+
+.cmp-preview-meta-bar > div + div {
+    margin-top: 2px;
+}
+
+@media (max-width: 700px) {
+    .cmp-manager-main {
+        flex-direction: column;
+    }
+    .cmp-sidebar {
+        width: 100%;
+        max-height: 140px;
+        border-right: none;
+        border-bottom: 1px solid var(--cmp-border);
+        padding: 4px;
+    }
+    .cmp-dashboard {
+        padding: 6px 10px;
+    }
+    .cmp-dash-cell,
+    .cmp-dash-item {
+        font-size: 0.78em;
+        padding: 3px 8px;
+    }
+}
