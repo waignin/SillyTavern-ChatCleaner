@@ -16,15 +16,17 @@
 
 ### ✨ 核心特性
 
-- ⚡ **增量缓存与极速跨角色扫描**：聊天状态签名缓存于 IndexedDB。无新聊天的角色直接命中本地缓存，**零网络开销**，数秒内即可扫描数百个角色。支持 2–16 并发工作线程，随时暂停/恢复/停止。
-- 🛡️ **多层数据安全防护**：
-  - **活跃聊天豁免**：当前在 SillyTavern 前台打开的聊天会被自动锁定 (`Active Chat`)，防止前端状态冲突。
-  - **防损坏高优警告**：自动检测 **≤ 2 条消息但文件体积异常大**（默认 `≥ 15 KB`，可配置）的文件。这类文件可能是崩溃导致的损坏存档或包含大量世界书的问候，它们会被“一键选择正常”跳过，手动选择时需二次确认。
-  - **分支、存档点与父节点保护**：自动构建父子依赖索引。带有依赖存档点的分支和父聊天会被保护，防止故事线被意外截断。
-  - **删除前实时校验**：删除前会拉取最新的 `.jsonl` 负载，验证实际消息数是否与缓存一致。空数组或数量不匹配的文件将被自动跳过。
-- 🗑️ **网络容错的原子化回收站**：元数据和聊天负载在物理删除前，会通过单次 IndexedDB 事务提交。如果浏览器存储空间不足，删除将自动中止；如果网络中断，备份也会被严格保留。回收站保留时间可配置（5分钟至7天，或永不过期）。
-- 👁️ **逐层折叠预览与一键导出**：轻量级纯文本预览（无重型正则或 HTML 渲染）。长聊天自动折叠中间楼层，直达**最后楼层**，并支持一键导出 `.jsonl` 备份到本地。
-- 👤 **多用户隔离**：自动根据 SillyTavern 的用户 Handle 隔离 IndexedDB 和设置，同一浏览器下的多账号不会互相看到对方的回收站。
+- ⚡ **极速扫描与沉浸式管理**：支持 2–16 并发扫描，随时暂停/恢复。支持**全屏沉浸模式**与**右下角悬浮导航**，批量勾选数百个文件时不再迷路；勾选的文件自动置顶，方便集中核对。
+- 🛡️ **五重数据安全防线（防误删机制）**：
+  - **最新档保护**：自动识别每个角色卡下时间最新的聊天记录（可设置最小消息数），标记为「慎删」，防止把当前正在推的主线误删。
+  - **长篇剧情保护**：消息数大于设定阈值（默认 50 条）的长篇存档自动标记为「慎删」。
+  - **损坏存档防误触**：自动检测体积异常大但消息极少的文件（如崩溃导致只剩开场白的坏档）。
+  - **分支与主干关联保护**：识别 Checkpoint/分支/书签，保护父子节点，防止误删断链。
+  - **前台活跃强制豁免**：当前正打开的角色聊天被强制锁定，不可勾选。
+- 🔄 **智能三态全选**：告别几百条慎删项一个个点的折磨。第一次点击全选「普通项」，第二次点击全选「含慎删项」，第三次点击取消全选，且复选框有极其清晰的“半选/全选”视觉反馈。
+- 🗑️ **原子级断网容错回收站**：删除前必须通过 IndexedDB 事务写入回收站备份。如果网络中断或存储空间不足，自动中止删除并保留文件。支持自定义保留时间（5分钟至永久），随时还原、导出或加锁。
+- 👁️ **楼层折叠预览与一键导出**：轻量级纯文本预览（无 HTML 渲染卡顿）。自动折叠中间楼层，直达最后一楼，支持直接导出 `.jsonl`。
+- 👤 **多用户隔离**：按酒馆用户 Handle 自动隔离数据库，多账号互不干扰。
 
 ### 📦 安装方法
 
@@ -35,21 +37,18 @@
 
 > **手动安装**：若使用 `git clone`，请将文件夹放置在 `SillyTavern/public/scripts/extensions/third-party/SillyTavern-ChatCleaner/` 下。需要 **SillyTavern 1.17.0+** (推荐)。  
 
-
 ### 🚀 使用指南
 
 1. 点击 SillyTavern **底部工具栏**的 **🪄 魔法棒** 菜单，选择 **聊天记录管理 / Chat Cleaner**。
-2. 使用过滤面板（默认展开），按 **消息数量**（如 `0 ~ 1`）、**文件大小 (KB)** 或 **未活跃天数** 进行筛选，或直接点击快捷预设（如 **≤ 1 条消息**）。
-3. 点击任意行的 **预览** 检查内容，或点击 **导出** 将 `.jsonl` 备份下载到本地。
-4. 点击 **清理选中项**。被删除的文件将保留在 **回收站** 标签页中（默认 60 分钟，可配置），你可随时还原、导出或将其锁定以防自动过期。
+2. 利用**顶部仪表盘**和**角色侧边栏**快速定位。支持按**消息数、体积、未互动天数**筛选，或使用快捷预设。
+3. 选中文件时，被选中的文件会自动置顶。利用右下角的悬浮按钮可一键回到**顶部/底部**，或精准跳转到**已选与未选的分界线**。
+4. 点击 **清理选中项**。高危被删文件会弹出二次确认，最终放入 **回收站**（默认保留 60 分钟，可恢复）。
 
 ### ⚠️ 安全与注意事项
 
-- **回收站位于浏览器本地**：删除的聊天会备份到 IndexedDB。**请勿在保留期内清除浏览器站点数据或使用无痕模式**，否则备份将丢失。
-- **活跃聊天受保护**：当前在前台打开的聊天免于被删除。如需清理，请先切换到其他聊天。
-- **永久删除不可逆**：若关闭“自动备份到回收站”或在回收站内点击“彻底销毁”，文件将从磁盘物理移除，本插件无法恢复。
-- **外部文件修改**：若你通过操作系统文件管理器手动在 `chats/` 目录下增删了 `.jsonl` 文件，请点击插件内的 **“完整重新扫描”** 以同步缓存。
-- **已删除角色的残留聊天**：本插件仅扫描当前角色列表中存在的聊天。已删除角色留下的残留聊天文件夹，请使用 SillyTavern 内置的 **清理菜单** (设置 → 数据清理) 处理。
+- **回收站位于浏览器本地**：删除的聊天备份在 IndexedDB 中。**请勿清除浏览器站点数据或使用无痕模式**，否则备份将丢失。
+- **外部文件修改**：若你通过系统文件夹手动增删了 `.jsonl`，请点击插件内的 **“全量重扫”** 同步缓存。
+- **已删除角色的残留聊天**：本插件仅扫描当前角色列表中存在的聊天，已删除角色的孤儿文件请用 SillyTavern 内置清理菜单处理。
 
 ---
 
@@ -58,19 +57,21 @@
 
 A visual, safety-first global chat file manager and zombie-chat cleaner for **SillyTavern**.  
 
-Over time, SillyTavern users accumulate hundreds or thousands of 1-message "greeting-only" `.jsonl` chat files across dozens of characters. **Chat Cleaner & Manager** lets you scan, filter, preview, export, and batch-clean redundant chat files in seconds—backed by an atomic IndexedDB Trash Bin and multi-layered anti-misclick protections.
+Over time, SillyTavern users accumulate hundreds or thousands of 1-message "greeting-only" `.jsonl` chat files. **Chat Cleaner & Manager** lets you scan, filter, preview, export, and batch-clean redundant files in seconds—backed by an atomic IndexedDB Trash Bin and multi-layered anti-misclick protections.
 
 ### ✨ Key Features
 
-- ⚡ **Incremental Cache & Fast Cross-Character Scan**: Character chat state signatures are cached in IndexedDB. Characters without new chats hit local cache with **0 network overhead**, scanning hundreds of characters in seconds. Supports 2–16 concurrent workers with pause/resume/stop at any time.
-- 🛡️ **Multi-Layered Data Safety**:
-  - **Active Chat Exemption**: The currently open chat in SillyTavern is automatically locked (`Active Chat`) to prevent frontend state conflicts.
-  - **Anti-Corruption High-Risk Warning**: Automatically detects abnormal files with **≤ 2 messages but large file sizes** (default `≥ 15 KB`, configurable)—which may be crash-corrupted long saves or massive lorebook greetings. They are skipped by "Select Normal" presets and require explicit confirmation if manually selected.
-  - **Branch, Checkpoint & Parent Protection**: Automatically builds a parent-child dependency index. Branches and parent chats with dependent checkpoints are protected, preventing broken story trees.
-  - **Pre-Deletion Live Verification**: Fetches the live `.jsonl` payload before deletion to verify that the actual message count matches the cached count. Empty arrays and mismatched counts are skipped.
-- 🗑️ **Network-Resilient Atomic Trash Bin**: Metadata and chat payloads are committed in a single IndexedDB transaction *before* physical deletion. If browser storage is full, deletion is automatically aborted. Trash retention is configurable (5 mins to 7 days, or never).
-- 👁️ **Floor-by-Floor Collapsible Preview & Export**: Lightweight pure-text preview (no heavy regex or HTML execution). Automatically folds middle floors for long chats, jumps straight to the **last floor**, and supports one-click `.jsonl` export to your device.
-- 👤 **Multi-User Isolation**: Automatically scopes IndexedDB and settings per SillyTavern user handle, so multiple accounts on the same browser do not see each other's Trash Bin.
+- ⚡ **Fast Scan & Immersive Management**: Supports 2–16 concurrent workers. Features a **Fullscreen Mode** and **Floating Quick-Nav** (Top/Split/Bottom) to handle hundreds of files effortlessly. Selected items can be auto-pinned to the top.
+- 🛡️ **5-Layer Data Safety**:
+  - **Latest Chat Protection**: Automatically identifies each character's most recent chat (with a minimum message threshold) and flags it as High-Risk.
+  - **Long Chat Protection**: Chats with messages ≥ threshold (default 50) are flagged as High-Risk.
+  - **Anti-Corruption Warning**: Detects files with ≤2 messages but huge file sizes (crash-corrupted saves).
+  - **Branch & Parent Protection**: Builds a dependency index to prevent broken story trees.
+  - **Active Chat Exemption**: The currently open chat is hard-locked.
+- 🔄 **Tri-State Select All**: No more clicking 500 checkboxes one by one. 1st click selects normal items (indeterminate state), 2nd click selects everything including high-risk items (checked), 3rd click clears all.
+- 🗑️ **Network-Resilient Atomic Trash Bin**: Metadata and payloads are committed in a single IndexedDB transaction. Aborts deletion if storage is full or network drops. Configurable retention (5 mins to never).
+- 👁️ **Collapsible Floor Preview & Export**: Lightweight text preview with middle floors collapsed. One-click `.jsonl` export.
+- 👤 **Multi-User Isolation**: IndexedDB and settings are scoped per ST user handle.
 
 ### 📦 Installation
 
@@ -79,22 +80,20 @@ Over time, SillyTavern users accumulate hundreds or thousands of 1-message "gree
 3. Paste the repository URL: `https://github.com/waignin/SillyTavern-ChatCleaner`
 4. Click **Install** and refresh the page.
 
-> **Manual Installation**: If installing via `git clone`, place the folder under `SillyTavern/public/scripts/extensions/third-party/SillyTavern-ChatCleaner/`. Requires **SillyTavern 1.17.0+** (recommended).  
+> **Manual Installation**: Place the folder under `SillyTavern/public/scripts/extensions/third-party/SillyTavern-ChatCleaner/`. Requires **SillyTavern 1.17.0+**.
 
 ### 🚀 Usage
 
 1. Click the **🪄 Magic Wand** menu in the **bottom toolbar** and select **Chat Cleaner**.
-2. Use the filter drawer to filter by **Message Count** (e.g., `0 ~ 1`), **File Size (KB)**, or **Inactive Days**, or click a quick preset like **≤ 1 Msg**.
-3. Click **Preview** on any row to inspect floors, or **Export** to download a `.jsonl` backup.
-4. Click **Clean Selected**. Deleted files are kept in the **Trash Bin** tab (default 60 mins, configurable), where they can be restored, exported, or locked.
+2. Use the dashboard and sidebar to filter by **Message Count**, **File Size**, or **Inactive Days**, or use quick presets.
+3. Checked items are auto-pinned. Use the floating buttons to jump to Top, Bottom, or the **Selection Boundary**.
+4. Click **Clean Selected**. Deleted files are kept in the **Trash Bin** (default 60 mins) for recovery.
 
 ### ⚠️ Safety & Risks
 
-- **Trash Bin lives in your browser**: Deleted chats are backed up to IndexedDB. **Do not clear browser site data** or use Incognito during the retention window, or the backups are lost.
-- **Active Chat is protected**: The chat currently open in the foreground is exempt from deletion. Switch to another chat first if you want to clean it.
-- **Permanent deletion is permanent**: If you disable "Auto Backup to Trash Bin" or click "Destroy" inside the Trash Bin, files are physically removed from disk and cannot be recovered by this extension.
-- **External file edits**: If you manually add/modify `.jsonl` files inside `chats/` via OS file explorer, click **"Full Rescan"** to sync the plugin's cache.
-- **Orphan chats from deleted characters**: This extension only scans chat records belonging to characters currently in your roster. Leftover chat folders from deleted characters should be handled by SillyTavern's built-in **Clean-Up Menu** (Settings → Data Cleanup).
+- **Trash Bin lives in your browser**: Backed up in IndexedDB. Do not clear site data or use Incognito.
+- **External file edits**: If you manually add/modify `.jsonl` files, click **"Full Rescan"**.
+- **Orphan chats**: Use SillyTavern's built-in **Clean-Up Menu** for chats from deleted characters.
 
 ---
 
