@@ -35,8 +35,11 @@ const DEFAULT_SETTINGS = {
     largeZombieWarn: true,          // 异常大体积少消息警告开关
     largeZombieSizeKB: 15,          // 触发异常大体积警告的阈值 (KB)
     protectBranches: true,          // 保护分支/书签及父聊天（全选时默认跳过）
+    pinSelected: true,              // 选中项自动置顶（默认开启）
     protectLatestChat: true,        // 保护每个角色卡的最新聊天记录（当消息数 ≥ 阈值时标为慎删）
     latestChatMinMsgs: 2,           // 触发角色最新记录保护的最小消息数阈值（默认 ≥2 条，跳过 1 条开场白废档）
+    protectLongChat: true,          // 保护长篇聊天存档（默认开启）
+    longChatMinMsgs: 50,            // 触发长篇存档保护的最小消息数阈值（默认 ≥50 条）
     concurrency: 8
 };
 
@@ -129,13 +132,31 @@ const I18N = {
         tipCheckpoint: '识别为分支或书签节点，全选默认跳过，可手动勾选清理',
         tagParentChat: '主干聊天(含{n}分支)',
         tipParentChat: '该记录下关联了 {n} 个子分支/书签，删除主干可能断开分支返回链接，全选默认跳过',
-        tagLatestChat: '角色最新记录',
-        tipLatestChat: '该角色卡下最后对话时间最新（或酒馆当前绑定）且消息数 ≥{min} 条的记录，全选默认跳过，可二次点击全选或手动勾选清理',
+        tagLatestChat: '角色最新档(慎删)',
+        tipLatestChat: '该角色卡下最后对话时间最新（或酒馆当前绑定）且消息数 ≥{min} 条的记录，首次全选默认跳过，可二次点击全选或手动勾选清理',
+        tagLongChat: '长篇存档(慎删)',
+        tipLongChat: '消息数达到 {count} 条（≥{min} 条阈值）的长篇剧情存档，首次全选默认跳过，可二次点击全选或手动勾选清理',
+        setPinSelectedTitle: '选中项自动置顶',
+        setPinSelectedDesc: '开启后，已勾选的聊天记录会优先排在列表最上方，方便集中核对；配合右下角「↕ 分界」按钮可一键跳转到已选与未选交界处。',
         setLatestProtTitle: '保护各角色卡最新聊天记录 (防误删主进度)',
-        setLatestProtDesc: '当某条记录是该角色卡的最新对话且消息数达到设定阈值时标为「角色最新记录(慎删)」，首次全选默认跳过。设为 1 则连开场白也一并保护。',
+        setLatestProtDesc: '当某条记录是该角色卡的最新对话且消息数达到设定阈值时标为「角色最新档(慎删)」，首次全选默认跳过。设为 1 则连开场白也一并保护。',
         setLatestMinLabel: '最小消息数≥:',
+        setLongProtTitle: '保护长篇聊天存档 (防误删长剧情)',
+        setLongProtDesc: '当聊天消息数达到设定阈值（默认 ≥50 条）时标为「长篇存档(慎删)」，首次全选默认跳过。',
+        setLongMinLabel: '长篇阈值(条)≥:',
         dashLatest: '角色最新',
-        previewMetaStatusLatest: '角色最新记录',
+        dashLong: '长篇存档',
+        previewMetaStatusLatest: '角色最新档(慎删)',
+        previewMetaStatusLong: '长篇存档(慎删)',
+        fullscreenBtn: '⛶ 全屏',
+        fullscreenTip: '进入全屏沉浸列表模式，最大化聊天文件展示空间',
+        exitFullscreenBtn: '✕ 退出全屏',
+        fabTop: '↑ 顶',
+        fabTopTip: '滚动到列表最顶部',
+        fabBoundary: '↕ 分界',
+        fabBoundaryTip: '跳转到已勾选行与未勾选行的交界处（若全选或全未选则跳至列表正中间）',
+        fabBottom: '↓ 底',
+        fabBottomTip: '滚动到列表最底部',
         footerStat: '已选 <b style="color:var(--cmp-accent);">{sel}</b>/{selectable} 可选项 (<b>{size}</b>){extra}',
         footerExtraRisk: ' <span style="color:#fca5a5 !important; font-weight:600;">[含慎删 {n} 项]</span>',
         footerExtraExempt: ' <span style="opacity:0.75;">[已豁免 {n} 项]</span>',
@@ -268,13 +289,31 @@ const I18N = {
         tipCheckpoint: 'Identified as a branch/checkpoint. Skipped by Select All; check manually to clean.',
         tagParentChat: 'Parent Chat ({n} branches)',
         tipParentChat: 'Has {n} dependent child branch(es)/checkpoint(s). Skipped by Select All.',
-        tagLatestChat: 'Latest Chat',
+        tagLatestChat: 'Latest Chat (High-Risk)',
         tipLatestChat: 'Most recent chat for this character with ≥{min} messages. Skipped by 1st Select All; click again or check manually to clean.',
+        tagLongChat: 'Long Chat (High-Risk)',
+        tipLongChat: 'Long story save with {count} messages (≥{min} threshold). Skipped by 1st Select All; click again or check manually to clean.',
+        setPinSelectedTitle: 'Auto-Pin Selected Items to Top',
+        setPinSelectedDesc: 'When enabled, checked chat records are sorted to the top of the list. Use the floating "↕ Split" button to jump to the boundary.',
         setLatestProtTitle: 'Protect Latest Chat per Character (Anti-Progress Loss)',
         setLatestProtDesc: "Flags each character's most recent chat (with msgs ≥ threshold) as High-Risk so 1st Select All skips it. Set threshold to 1 to also protect 1-msg greetings.",
         setLatestMinLabel: 'Min Msgs≥:',
+        setLongProtTitle: 'Protect Long Story Chats (Anti-Long-Save Loss)',
+        setLongProtDesc: 'Flags chats with messages ≥ threshold (default 50) as High-Risk so 1st Select All skips them.',
+        setLongMinLabel: 'Long Msgs≥:',
         dashLatest: 'Latest chat',
-        previewMetaStatusLatest: 'Latest chat for character',
+        dashLong: 'Long chat',
+        previewMetaStatusLatest: 'Latest chat (High-Risk)',
+        previewMetaStatusLong: 'Long chat (High-Risk)',
+        fullscreenBtn: '⛶ Full',
+        fullscreenTip: 'Enter immersive fullscreen mode to maximize chat list view',
+        exitFullscreenBtn: '✕ Exit Fullscreen',
+        fabTop: '↑ Top',
+        fabTopTip: 'Scroll to top of list',
+        fabBoundary: '↕ Split',
+        fabBoundaryTip: 'Jump to boundary between selected and unselected rows (or middle of list)',
+        fabBottom: '↓ End',
+        fabBottomTip: 'Scroll to bottom of list',
         footerStat: 'Selected <b style="color:var(--cmp-accent);">{sel}</b>/{selectable} selectable (<b>{size}</b>){extra}',
         footerExtraRisk: ' <span style="color:#fca5a5 !important; font-weight:600;">[{n} High-Risk]</span>',
         footerExtraExempt: ' <span style="opacity:0.75;">[{n} Exempt]</span>',
@@ -368,8 +407,11 @@ function sanitizeSettings(rawObj) {
     merged.largeZombieWarn = Boolean(merged.largeZombieWarn);
     merged.largeZombieSizeKB = Math.min(10240, Math.max(5, Number(merged.largeZombieSizeKB) || 15));
     merged.protectBranches = merged.protectBranches !== undefined ? Boolean(merged.protectBranches) : true;
+    merged.pinSelected = merged.pinSelected !== undefined ? Boolean(merged.pinSelected) : true;
     merged.protectLatestChat = merged.protectLatestChat !== undefined ? Boolean(merged.protectLatestChat) : true;
     merged.latestChatMinMsgs = Math.min(10000, Math.max(1, Number(merged.latestChatMinMsgs) || 2));
+    merged.protectLongChat = merged.protectLongChat !== undefined ? Boolean(merged.protectLongChat) : true;
+    merged.longChatMinMsgs = Math.min(100000, Math.max(5, Number(merged.longChatMinMsgs) || 50));
     return merged;
 }
 
@@ -397,6 +439,7 @@ const State = {
     pausePromise: null,
     pauseResolve: null,
     activeTab: 'manager',
+    isFullscreen: false,
     drawerOpen: typeof window !== 'undefined' ? window.innerWidth > 700 : true,
     sidebarCollapsedDesktop: false,
     hasInitialLoaded: false,
@@ -943,6 +986,19 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
                 tip: t('tipLatestChat', { min: latestMinMsgs })
             };
         }
+
+        // 7. 检查是否为长篇聊天存档（消息数 ≥ 设定阈值，默认 50 条）
+        const longProtEnabled = State.settings.protectLongChat;
+        const longMinMsgs = Math.max(5, Number(State.settings.longChatMinMsgs) || 50);
+        if (msgCount >= longMinMsgs) {
+            return {
+                exempt: false,
+                highRisk: longProtEnabled,
+                reason: 'long_chat',
+                label: t('tagLongChat'),
+                tip: t('tipLongChat', { count: msgCount, min: longMinMsgs })
+            };
+        }
     } catch (e) {
         console.warn('[ChatCleaner] Protection eval error:', e);
     }
@@ -1263,6 +1319,29 @@ async function runIncrementalOrFullScan(forceFull = false) {
 // ============================================================================
 // 5. 列表筛选、排序与渲染
 // ============================================================================
+function sortFilteredRecords() {
+    const sortBy = $('#cmp-sort-select').val() || 'msg_asc';
+    const pinSelected = Boolean(State.settings.pinSelected);
+
+    State.filteredRecords.sort((a, b) => {
+        if (pinSelected) {
+            const aSel = !a.exempt && State.selectedIds.has(a.id) ? 1 : 0;
+            const bSel = !b.exempt && State.selectedIds.has(b.id) ? 1 : 0;
+            if (aSel !== bSel) return bSel - aSel;
+        }
+        switch (sortBy) {
+            case 'msg_asc': return a.msgCount - b.msgCount || b.sizeKB - a.sizeKB;
+            case 'msg_desc': return b.msgCount - a.msgCount || b.sizeKB - a.sizeKB;
+            case 'size_desc': return b.sizeKB - a.sizeKB;
+            case 'size_asc': return a.sizeKB - b.sizeKB;
+            case 'time_desc': return (b.lastTime || 0) - (a.lastTime || 0);
+            case 'time_asc': return (a.lastTime || 0) - (b.lastTime || 0);
+            case 'name_asc': return a.charName.localeCompare(b.charName, 'zh-CN');
+            default: return 0;
+        }
+    });
+}
+
 function applyFiltersAndRender(resetSelection = false) {
     const kw = ($('#cmp-search-input').val() || '').trim().toLowerCase();
     const minMsg = $('#cmp-min-msg').val() === '' ? 0 : Number($('#cmp-min-msg').val());
@@ -1287,6 +1366,7 @@ function applyFiltersAndRender(resetSelection = false) {
             if (State.statusFilter === 'checkpoint' && r.reason !== 'checkpoint' && r.reason !== 'parent_chat') return false;
             if (State.statusFilter === 'corrupted_large' && r.reason !== 'corrupted_large') return false;
             if (State.statusFilter === 'latest_chat' && r.reason !== 'latest_chat') return false;
+            if (State.statusFilter === 'long_chat' && r.reason !== 'long_chat') return false;
             if (State.statusFilter === 'backup' && r.reason !== 'backup') return false;
         }
         if (kw && !r.charName.toLowerCase().includes(kw) && !r.chatFile.toLowerCase().includes(kw)) {
@@ -1305,19 +1385,7 @@ function applyFiltersAndRender(resetSelection = false) {
         return true;
     });
 
-    State.filteredRecords.sort((a, b) => {
-        switch (sortBy) {
-            case 'msg_asc': return a.msgCount - b.msgCount || b.sizeKB - a.sizeKB;
-            case 'msg_desc': return b.msgCount - a.msgCount;
-            case 'size_desc': return b.sizeKB - a.sizeKB;
-            case 'size_asc': return a.sizeKB - b.sizeKB;
-            case 'time_desc': return (b.lastTime || 0) - (a.lastTime || 0);
-            case 'time_asc': return (a.lastTime || 0) - (b.lastTime || 0);
-            case 'name_asc': return a.charName.localeCompare(b.charName, 'zh-CN');
-            default: return 0;
-        }
-    });
-
+    sortFilteredRecords();
     renderManagerTable();
     updateDashboardActive();
     updateSidebarActive();
@@ -1367,6 +1435,7 @@ function computeDashboardStats() {
     let branchCount = 0;
     let corruptCount = 0;
     let latestCount = 0;
+    let longCount = 0;
     const avatarSet = new Set();
     for (const r of records) {
         totalKB += r.sizeKB || 0;
@@ -1374,6 +1443,7 @@ function computeDashboardStats() {
         if (r.reason === 'checkpoint' || r.reason === 'parent_chat') branchCount++;
         if (r.reason === 'corrupted_large') corruptCount++;
         if (r.reason === 'latest_chat') latestCount++;
+        if (r.reason === 'long_chat') longCount++;
         if (r.avatarFile) avatarSet.add(r.avatarFile);
     }
     let trashKB = 0;
@@ -1386,6 +1456,7 @@ function computeDashboardStats() {
         branchCount,
         corruptCount,
         latestCount,
+        longCount,
         trashCount: State.trashMetaList.length,
         trashKB
     };
@@ -1431,6 +1502,7 @@ function renderDashboard() {
         </button>
         <div class="${cls('zombie')}" data-dash="zombie"><span class="cmp-dash-label">${escapeHtml(t('dashZombie'))}</span><span class="cmp-dash-value">${s.zombieCount}</span></div>
         <div class="${cls('latest')}" data-dash="latest"><span class="cmp-dash-label">${escapeHtml(t('dashLatest'))}</span><span class="cmp-dash-value">${s.latestCount}</span></div>
+        <div class="${cls('long')}" data-dash="long"><span class="cmp-dash-label">${escapeHtml(t('dashLong'))}</span><span class="cmp-dash-value">${s.longCount}</span></div>
         <div class="${cls('checkpoint')}" data-dash="checkpoint"><span class="cmp-dash-label">${escapeHtml(t('dashBranch'))}</span><span class="cmp-dash-value">${s.branchCount}</span></div>
         <div class="${cls('corrupt')}" data-dash="corrupt"><span class="cmp-dash-label">${escapeHtml(t('dashCorrupt'))}</span><span class="cmp-dash-value">${s.corruptCount}</span></div>
         ${showTrashBtn ? `<div class="cmp-dash-item" data-dash="trash"><span class="cmp-dash-label">${escapeHtml(t('dashTrash'))}</span><span class="cmp-dash-value">${s.trashCount} <span style="opacity:0.7;font-weight:400;">(${formatSize(s.trashKB)})</span></span></div>` : ''}
@@ -1548,6 +1620,8 @@ function activateDashboardFilter(key) {
         $('#cmp-max-msg').val(1);
     } else if (key === 'latest') {
         State.statusFilter = 'latest_chat';
+    } else if (key === 'long') {
+        State.statusFilter = 'long_chat';
     } else if (key === 'checkpoint') {
         State.statusFilter = 'checkpoint';
     } else if (key === 'corrupt') {
@@ -1588,6 +1662,7 @@ function renderManagerTable() {
             if (r.exempt) tagClass = 'cmp-tag-exempt';
             else if (r.reason === 'corrupted_large' || r.reason === 'backup') tagClass = 'cmp-tag-danger';
             else if (r.reason === 'latest_chat') tagClass = 'cmp-tag-latest';
+            else if (r.reason === 'long_chat') tagClass = 'cmp-tag-long';
             protTagHtml = `<span class="cmp-tag ${tagClass}" title="${escapeHtml(r.tip)}">${escapeHtml(r.label)}</span> `;
         }
 
@@ -1650,13 +1725,13 @@ function syncSelectAllCheckbox() {
     const $lbl = $('#cmp-select-all-label');
 
     if (info.state === 'all') {
-        $boxes.prop('checked', true).prop('indeterminate', false);
+        $boxes.prop('checked', true).prop('indeterminate', false).attr('data-state', 'all');
         $lbl.text(t('selectAllCancel'));
     } else if (info.state === 'partial') {
-        $boxes.prop('checked', false).prop('indeterminate', true);
+        $boxes.prop('checked', false).prop('indeterminate', true).attr('data-state', 'partial');
         $lbl.text(info.hasHighRisk ? t('selectAllForce') : t('selectAllCancel'));
     } else {
-        $boxes.prop('checked', false).prop('indeterminate', false);
+        $boxes.prop('checked', false).prop('indeterminate', false).attr('data-state', 'none');
         $lbl.text(info.hasNormal ? t('selectAllNormal') : t('selectAllForce'));
     }
 }
@@ -1671,7 +1746,6 @@ function handleSelectAllCycle() {
     const normalItems = nonExempt.filter((r) => !r.highRisk);
     const highRiskItems = nonExempt.filter((r) => r.highRisk);
     const hasNormal = normalItems.length > 0;
-    const hasHighRisk = highRiskItems.length > 0;
 
     const allNormalSelected = hasNormal && normalItems.every((r) => State.selectedIds.has(r.id));
     const allNonExemptSelected = nonExempt.every((r) => State.selectedIds.has(r.id));
@@ -1699,7 +1773,57 @@ function handleSelectAllCycle() {
         }
     }
 
+    sortFilteredRecords();
     renderManagerTable();
+}
+
+function toggleFullscreenMode(forceState = null) {
+    const next = forceState !== null ? Boolean(forceState) : !State.isFullscreen;
+    State.isFullscreen = next;
+    $('#cmp-overlay').toggleClass('cmp-is-fullscreen', next);
+    $('#cmp-modal').toggleClass('cmp-fullscreen', next);
+    const $exitBtn = $('#cmp-exit-fullscreen-btn');
+    if (next) {
+        $exitBtn.show();
+    } else {
+        $exitBtn.hide();
+    }
+}
+
+function jumpToSelectionBoundary() {
+    const $body = $('#cmp-manager-body');
+    if (!$body.length || !$body[0]) return;
+    const $rows = $body.find('tr.cmp-row');
+    if ($rows.length === 0) return;
+
+    // 寻找列表中「已勾选行」与「未勾选行」的交界处
+    let boundaryRow = null;
+    let prevChecked = null;
+    $rows.each(function () {
+        const ck = $(this).find('.cmp-row-check').prop('checked');
+        if (prevChecked !== null && ck !== prevChecked) {
+            boundaryRow = this;
+            return false; // break
+        }
+        prevChecked = ck;
+    });
+
+    const container = $body[0];
+    if (boundaryRow) {
+        const containerRect = container.getBoundingClientRect();
+        const rowRect = boundaryRow.getBoundingClientRect();
+        const targetScroll = container.scrollTop + (rowRect.top - containerRect.top) - (container.clientHeight * 0.35);
+        $body.stop(true).animate({ scrollTop: Math.max(0, targetScroll) }, 180);
+        const $bRow = $(boundaryRow);
+        $bRow.removeClass('cmp-boundary-flash');
+        void boundaryRow.offsetWidth;
+        $bRow.addClass('cmp-boundary-flash');
+        setTimeout(() => $bRow.removeClass('cmp-boundary-flash'), 900);
+    } else {
+        // 若全部选中或全部未选，则滚动到列表正中间
+        const midScroll = Math.max(0, (container.scrollHeight - container.clientHeight) / 2);
+        $body.stop(true).animate({ scrollTop: midScroll }, 180);
+    }
 }
 
 function updateFooterSummary() {
@@ -1849,6 +1973,7 @@ async function openLightweightPreview(recordId) {
                 : rec.reason === 'parent_chat' ? t('previewMetaStatusParent', { n: branchCount })
                 : rec.reason === 'checkpoint' ? t('previewMetaStatusCheckpoint')
                 : rec.reason === 'latest_chat' ? t('previewMetaStatusLatest')
+                : rec.reason === 'long_chat' ? t('previewMetaStatusLong')
                 : rec.reason === 'backup' ? t('previewMetaStatusBackup')
                 : rec.reason === 'corrupted_large' ? t('previewMetaStatusCorrupt')
                 : t('previewMetaStatusNormal');
@@ -2012,6 +2137,7 @@ function confirmAndDelete() {
     const backupItems = targets.filter((r) => r.reason === 'backup');
     const branchOrParentItems = targets.filter((r) => r.reason === 'checkpoint' || r.reason === 'parent_chat');
     const latestChatItems = targets.filter((r) => r.reason === 'latest_chat');
+    const longChatItems = targets.filter((r) => r.reason === 'long_chat');
 
     let warningBoxesHtml = '';
 
@@ -2060,6 +2186,17 @@ function confirmAndDelete() {
         `;
     }
 
+    if (longChatItems.length > 0) {
+        const sampleLong = longChatItems.slice(0, 3).map((r) => `${escapeHtml(r.charName)} (${r.msgCount}${t('unitItems')})`).join(', ');
+        warningBoxesHtml += `
+            <div style="padding:8px; margin-bottom:6px; background:rgba(6,182,212,0.18); border:1px solid #06b6d4; border-radius:6px; color:#67e8f9 !important;">
+                📚 ${isEn()
+                    ? `Long Story Save Warning: Selection includes <b>${longChatItems.length}</b> long chat(s) with ≥${State.settings.longChatMinMsgs} messages (e.g. ${sampleLong}${longChatItems.length > 3 ? '...' : ''}).`
+                    : `长篇存档警告：所选项中包含 <b>${longChatItems.length}</b> 个消息数 ≥${State.settings.longChatMinMsgs} 条的长篇剧情存档（如：${sampleLong}${longChatItems.length > 3 ? ' 等' : ''}），请确认是否清理！`}
+            </div>
+        `;
+    }
+
     if (maxMsg > 1) {
         warningBoxesHtml += `
             <div style="padding:8px; margin-bottom:6px; background:rgba(59,130,246,0.16); border:1px solid #3b82f6; border-radius:6px; color:#93c5fd !important;">
@@ -2070,7 +2207,7 @@ function confirmAndDelete() {
         `;
     }
 
-    const isHighRiskConfirm = corruptedLargeItems.length > 0 || backupItems.length > 0 || branchOrParentItems.length > 0 || latestChatItems.length > 0;
+    const isHighRiskConfirm = corruptedLargeItems.length > 0 || backupItems.length > 0 || branchOrParentItems.length > 0 || latestChatItems.length > 0 || longChatItems.length > 0;
     const confirmBtnText = isEn()
         ? (isHighRiskConfirm ? `Force Clean (${targets.length})` : `Confirm Clean (${targets.length})`)
         : (isHighRiskConfirm ? `已知晓风险，强制清理 (${targets.length} 项)` : `确认清理 (${targets.length} 项)`);
@@ -2726,7 +2863,12 @@ function applyLanguageToDOM() {
     $('#cmp-help-btn').attr('title', t('helpTip'));
     $('#cmp-lang-toggle-top').text(isEn() ? '🌐 中文' : '🌐 EN');
     $('#cmp-reset-ui-top, #cmp-reset-ui-settings').text(t('resetUiBtn')).attr('title', t('resetUiTip'));
+    $('#cmp-fullscreen-btn').text(t('fullscreenBtn')).attr('title', t('fullscreenTip'));
+    $('#cmp-exit-fullscreen-btn').text(t('exitFullscreenBtn'));
     $('#cmp-close-btn').text(t('closeBtn'));
+    $('#cmp-fab-top').text(t('fabTop')).attr('title', t('fabTopTip'));
+    $('#cmp-fab-boundary').text(t('fabBoundary')).attr('title', t('fabBoundaryTip'));
+    $('#cmp-fab-bottom').text(t('fabBottom')).attr('title', t('fabBottomTip'));
 
     $('.cmp-tab[data-tab="manager"]').text(t('tabManager'));
     $('#cmp-tab-trash-label').text(t('tabTrash', { time: getRetentionLabelText() }));
@@ -2801,9 +2943,14 @@ function applyLanguageToDOM() {
     $('#cmp-set-large-kb-lbl').text(t('setLargeKBLabel'));
     $('#cmp-set-branch-title').text(t('setBranchProtTitle'));
     $('#cmp-set-branch-desc').text(t('setBranchProtDesc'));
+    $('#cmp-set-pin-title').text(t('setPinSelectedTitle'));
+    $('#cmp-set-pin-desc').text(t('setPinSelectedDesc'));
     $('#cmp-set-latest-title').text(t('setLatestProtTitle'));
     $('#cmp-set-latest-desc').text(t('setLatestProtDesc'));
     $('#cmp-set-latest-min-lbl').text(t('setLatestMinLabel'));
+    $('#cmp-set-long-title').text(t('setLongProtTitle'));
+    $('#cmp-set-long-desc').text(t('setLongProtDesc'));
+    $('#cmp-set-long-min-lbl').text(t('setLongMinLabel'));
     $('#cmp-set-verify-title').text(t('setVerifyTitle'));
     $('#cmp-set-verify-desc').text(t('setVerifyDesc'));
     $('#cmp-set-backup-title').text(t('setBackupTitle'));
@@ -2883,12 +3030,14 @@ async function openManagerModal() {
                             <span id="cmp-app-title"></span>
                             <span id="cmp-help-btn" class="cmp-help-circle">?</span>
                         </div>
-                        <div style="display:flex; align-items:center; gap:6px;">
+                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                            <button id="cmp-fullscreen-btn" class="cmp-btn cmp-btn-xs"></button>
                             <button id="cmp-lang-toggle-top" class="cmp-btn cmp-btn-xs" title="Switch Language / 切换中英文">🌐 EN</button>
                             <button id="cmp-reset-ui-top" class="cmp-reset-ui-btn"></button>
                             <button id="cmp-close-btn" class="cmp-btn"></button>
                         </div>
                     </div>
+                    <button id="cmp-exit-fullscreen-btn" class="cmp-exit-fullscreen-btn" style="display:none;"></button>
 
                     <!-- 导航标签页 -->
                     <div class="cmp-tabs">
@@ -2963,7 +3112,7 @@ async function openManagerModal() {
                             <div id="cmp-sidebar-backdrop" class="cmp-sidebar-backdrop"></div>
                             <aside id="cmp-sidebar" class="cmp-sidebar"></aside>
 
-                            <div class="cmp-body">
+                            <div id="cmp-manager-body" class="cmp-body">
                                 <table class="cmp-table">
                                     <thead>
                                         <tr>
@@ -2979,6 +3128,11 @@ async function openManagerModal() {
                                     </thead>
                                     <tbody id="cmp-tbody"></tbody>
                                 </table>
+                            </div>
+                            <div class="cmp-float-nav">
+                                <button type="button" id="cmp-fab-top" class="cmp-fab-btn"></button>
+                                <button type="button" id="cmp-fab-boundary" class="cmp-fab-btn cmp-fab-accent"></button>
+                                <button type="button" id="cmp-fab-bottom" class="cmp-fab-btn"></button>
                             </div>
                         </div>
 
@@ -3085,6 +3239,14 @@ async function openManagerModal() {
 
                                 <div class="cmp-setting-card">
                                     <div>
+                                        <div id="cmp-set-pin-title" class="cmp-setting-title"></div>
+                                        <div id="cmp-set-pin-desc" class="cmp-setting-desc"></div>
+                                    </div>
+                                    <input type="checkbox" id="cmp-set-pin-selected" checked>
+                                </div>
+
+                                <div class="cmp-setting-card">
+                                    <div>
                                         <div id="cmp-set-latest-title" class="cmp-setting-title"></div>
                                         <div id="cmp-set-latest-desc" class="cmp-setting-desc"></div>
                                     </div>
@@ -3092,6 +3254,18 @@ async function openManagerModal() {
                                         <span id="cmp-set-latest-min-lbl" style="font-size:0.84em; color:var(--cmp-text-sub);"></span>
                                         <input type="number" id="cmp-set-latest-min" class="cmp-input cmp-input-num" min="1" max="10000" value="2">
                                         <input type="checkbox" id="cmp-set-latest-prot" checked>
+                                    </div>
+                                </div>
+
+                                <div class="cmp-setting-card">
+                                    <div>
+                                        <div id="cmp-set-long-title" class="cmp-setting-title"></div>
+                                        <div id="cmp-set-long-desc" class="cmp-setting-desc"></div>
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                        <span id="cmp-set-long-min-lbl" style="font-size:0.84em; color:var(--cmp-text-sub);"></span>
+                                        <input type="number" id="cmp-set-long-min" class="cmp-input cmp-input-num" min="5" max="100000" value="50">
+                                        <input type="checkbox" id="cmp-set-long-prot" checked>
                                     </div>
                                 </div>
 
@@ -3163,8 +3337,11 @@ function syncSettingsToInputs() {
     $('#cmp-set-large-warn').prop('checked', State.settings.largeZombieWarn);
     $('#cmp-set-large-kb').val(State.settings.largeZombieSizeKB);
     $('#cmp-set-branch-prot').prop('checked', State.settings.protectBranches);
+    $('#cmp-set-pin-selected').prop('checked', State.settings.pinSelected);
     $('#cmp-set-latest-prot').prop('checked', State.settings.protectLatestChat);
     $('#cmp-set-latest-min').val(State.settings.latestChatMinMsgs);
+    $('#cmp-set-long-prot').prop('checked', State.settings.protectLongChat);
+    $('#cmp-set-long-min').val(State.settings.longChatMinMsgs);
     $('#cmp-set-verify').prop('checked', State.settings.verifyBeforeDelete);
     $('#cmp-set-backup').prop('checked', State.settings.safeBackupMode);
     $('#cmp-set-retention-mins').val(State.settings.trashRetentionMins);
@@ -3176,8 +3353,23 @@ function bindModalEvents() {
     const $modal = $('#cmp-modal');
 
     $('#cmp-help-btn').on('click', openHelpModal);
-    $('#cmp-close-btn').on('click', () => $('#cmp-overlay').hide());
+    $('#cmp-fullscreen-btn').on('click', () => toggleFullscreenMode(true));
+    $('#cmp-exit-fullscreen-btn').on('click', () => toggleFullscreenMode(false));
+    $('#cmp-close-btn').on('click', () => {
+        if (State.isFullscreen) toggleFullscreenMode(false);
+        $('#cmp-overlay').hide();
+    });
     $('#cmp-lang-toggle-top').on('click', toggleLanguage);
+
+    $('#cmp-fab-top').on('click', () => {
+        const $body = $('#cmp-manager-body');
+        if ($body.length) $body.stop(true).animate({ scrollTop: 0 }, 160);
+    });
+    $('#cmp-fab-bottom').on('click', () => {
+        const $body = $('#cmp-manager-body');
+        if ($body.length && $body[0]) $body.stop(true).animate({ scrollTop: $body[0].scrollHeight }, 160);
+    });
+    $('#cmp-fab-boundary').on('click', jumpToSelectionBoundary);
 
     $('#cmp-reset-ui-top, #cmp-reset-ui-settings').on('click', () => {
         saveSettings({
@@ -3229,12 +3421,14 @@ function bindModalEvents() {
             $('#cmp-max-msg').val(1);
             applyFiltersAndRender(true);
             State.filteredRecords.forEach((r) => { if (!r.exempt && !r.highRisk) State.selectedIds.add(r.id); });
+            sortFilteredRecords();
             renderManagerTable();
         } else if (p === 'short') {
             $('#cmp-min-msg').val(0);
             $('#cmp-max-msg').val(5);
             applyFiltersAndRender(true);
             State.filteredRecords.forEach((r) => { if (!r.exempt && !r.highRisk) State.selectedIds.add(r.id); });
+            sortFilteredRecords();
             renderManagerTable();
         } else if (p === 'all') {
             $('#cmp-min-msg').val(0);
@@ -3260,8 +3454,13 @@ function bindModalEvents() {
             State.selectedIds.delete(id);
             State.manualHighRiskIds.delete(id);
         }
-        syncSelectAllCheckbox();
-        updateFooterSummary();
+        if (State.settings.pinSelected) {
+            sortFilteredRecords();
+            renderManagerTable();
+        } else {
+            syncSelectAllCheckbox();
+            updateFooterSummary();
+        }
     });
 
     $modal.on('click', '.cmp-preview-btn', function () {
@@ -3511,10 +3710,24 @@ function bindModalEvents() {
         saveSettings({ ...State.settings, protectLatestChat: this.checked });
         applyFiltersAndRender(false);
     });
+    $('#cmp-set-pin-selected').on('change', function () {
+        saveSettings({ ...State.settings, pinSelected: this.checked });
+        applyFiltersAndRender(false);
+    });
     $('#cmp-set-latest-min').on('change', function () {
         const v = Math.min(10000, Math.max(1, Number($(this).val()) || 2));
         $(this).val(v);
         saveSettings({ ...State.settings, latestChatMinMsgs: v });
+        applyFiltersAndRender(false);
+    });
+    $('#cmp-set-long-prot').on('change', function () {
+        saveSettings({ ...State.settings, protectLongChat: this.checked });
+        applyFiltersAndRender(false);
+    });
+    $('#cmp-set-long-min').on('change', function () {
+        const v = Math.min(100000, Math.max(5, Number($(this).val()) || 50));
+        $(this).val(v);
+        saveSettings({ ...State.settings, longChatMinMsgs: v });
         applyFiltersAndRender(false);
     });
 

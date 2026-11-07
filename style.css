@@ -130,21 +130,21 @@
     background: var(--cmp-bg-input) !important;
     color: var(--cmp-text-main) !important;
     border: 1px solid var(--cmp-border) !important;
-    padding: 5px 10px;
+    padding: 4px 8px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 0.88em;
+    font-size: 0.82em;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 4px;
     white-space: nowrap;
     flex-shrink: 0;
 }
 
 .cmp-btn-xs {
-    padding: 3px 7px;
-    font-size: 0.8em;
+    padding: 2px 6px;
+    font-size: 0.76em;
 }
 
 .cmp-btn:hover:not(:disabled) {
@@ -1073,4 +1073,186 @@
         font-size: 0.78em;
         padding: 3px 8px;
     }
+}
+
+.cmp-tag-long {
+    background: rgba(6, 182, 212, 0.2);
+    color: #67e8f9 !important;
+    border: 1px solid rgba(6, 182, 212, 0.45);
+}
+
+/* ========== 自定义三态全选框与行复选框（跨端保证半选横线与勾选清晰可见） ========== */
+#cmp-select-all,
+#cmp-select-all-bottom,
+.cmp-row-check {
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    width: 17px !important;
+    height: 17px !important;
+    border: 1.5px solid var(--cmp-text-sub) !important;
+    border-radius: 4px !important;
+    background: var(--cmp-bg-input) !important;
+    cursor: pointer;
+    position: relative;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+    margin: 0 !important;
+    flex-shrink: 0;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.cmp-row-check:disabled {
+    opacity: 0.35 !important;
+    cursor: not-allowed !important;
+}
+
+/* 状态 1：半选横线（Indeterminate / data-state="partial"） */
+#cmp-select-all:indeterminate,
+#cmp-select-all-bottom:indeterminate,
+#cmp-select-all[data-state="partial"],
+#cmp-select-all-bottom[data-state="partial"] {
+    background: var(--cmp-accent) !important;
+    border-color: var(--cmp-accent) !important;
+}
+
+#cmp-select-all:indeterminate::after,
+#cmp-select-all-bottom:indeterminate::after,
+#cmp-select-all[data-state="partial"]::after,
+#cmp-select-all-bottom[data-state="partial"]::after {
+    content: "";
+    display: block;
+    width: 9px;
+    height: 2.2px;
+    background: #ffffff;
+    border-radius: 1px;
+}
+
+/* 状态 2：全选打勾（Checked / data-state="all"） */
+#cmp-select-all:checked,
+#cmp-select-all-bottom:checked,
+#cmp-select-all[data-state="all"],
+#cmp-select-all-bottom[data-state="all"],
+.cmp-row-check:checked {
+    background: var(--cmp-accent) !important;
+    border-color: var(--cmp-accent) !important;
+}
+
+#cmp-select-all:checked::after,
+#cmp-select-all-bottom:checked::after,
+#cmp-select-all[data-state="all"]::after,
+#cmp-select-all-bottom[data-state="all"]::after,
+.cmp-row-check:checked::after {
+    content: "";
+    display: block;
+    width: 4.5px;
+    height: 8.5px;
+    border: solid #ffffff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    margin-top: -1.5px;
+}
+
+/* ========== 全屏沉浸模式 ========== */
+#cmp-overlay.cmp-is-fullscreen {
+    padding: 0 !important;
+}
+
+#cmp-modal.cmp-fullscreen {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    border: none !important;
+}
+
+#cmp-modal.cmp-fullscreen .cmp-header,
+#cmp-modal.cmp-fullscreen .cmp-tabs,
+#cmp-modal.cmp-fullscreen .cmp-toolbar,
+#cmp-modal.cmp-fullscreen .cmp-dashboard {
+    display: none !important;
+}
+
+.cmp-exit-fullscreen-btn {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    z-index: 35;
+    background: rgba(15, 23, 42, 0.88) !important;
+    color: #ffffff !important;
+    border: 1.5px solid var(--cmp-accent) !important;
+    border-radius: 99px;
+    padding: 5px 12px;
+    font-size: 0.8em;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: transform 0.15s, background-color 0.15s;
+}
+
+.cmp-exit-fullscreen-btn:hover {
+    background: var(--cmp-accent) !important;
+    transform: scale(1.03);
+}
+
+/* ========== 列表右下角悬浮快捷导航按钮 (↑顶 / ↕分界 / ↓底) ========== */
+.cmp-float-nav {
+    position: absolute;
+    right: 14px;
+    bottom: 12px;
+    z-index: 18;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    pointer-events: none;
+}
+
+.cmp-fab-btn {
+    pointer-events: auto;
+    min-width: 44px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 99px;
+    background: rgba(27, 31, 46, 0.88) !important;
+    color: var(--cmp-text-main) !important;
+    border: 1px solid var(--cmp-border) !important;
+    font-size: 0.74em;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: transform 0.12s, border-color 0.15s, background-color 0.15s;
+    user-select: none;
+}
+
+.cmp-fab-btn:hover {
+    border-color: var(--cmp-accent) !important;
+    background: rgba(59, 130, 246, 0.25) !important;
+}
+
+.cmp-fab-btn:active {
+    transform: scale(0.94);
+}
+
+.cmp-fab-accent {
+    border-color: rgba(59, 130, 246, 0.6) !important;
+    color: #93c5fd !important;
+}
+
+@keyframes cmpBoundaryFlash {
+    0% { background-color: rgba(59, 130, 246, 0.42); }
+    100% { background-color: transparent; }
+}
+
+.cmp-row.cmp-boundary-flash {
+    animation: cmpBoundaryFlash 0.9s ease;
 }
