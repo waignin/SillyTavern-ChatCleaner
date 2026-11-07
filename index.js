@@ -35,6 +35,8 @@ const DEFAULT_SETTINGS = {
     largeZombieWarn: true,          // 异常大体积少消息警告开关
     largeZombieSizeKB: 15,          // 触发异常大体积警告的阈值 (KB)
     protectBranches: true,          // 保护分支/书签及父聊天（全选时默认跳过）
+    protectLatestChat: true,        // 保护每个角色卡的最新聊天记录（当消息数 ≥ 阈值时标为慎删）
+    latestChatMinMsgs: 2,           // 触发角色最新记录保护的最小消息数阈值（默认 ≥2 条，跳过 1 条开场白废档）
     concurrency: 8
 };
 
@@ -127,6 +129,13 @@ const I18N = {
         tipCheckpoint: '识别为分支或书签节点，全选默认跳过，可手动勾选清理',
         tagParentChat: '主干聊天(含{n}分支)',
         tipParentChat: '该记录下关联了 {n} 个子分支/书签，删除主干可能断开分支返回链接，全选默认跳过',
+        tagLatestChat: '角色最新记录',
+        tipLatestChat: '该角色卡下最后对话时间最新（或酒馆当前绑定）且消息数 ≥{min} 条的记录，全选默认跳过，可二次点击全选或手动勾选清理',
+        setLatestProtTitle: '保护各角色卡最新聊天记录 (防误删主进度)',
+        setLatestProtDesc: '当某条记录是该角色卡的最新对话且消息数达到设定阈值时标为「角色最新记录(慎删)」，首次全选默认跳过。设为 1 则连开场白也一并保护。',
+        setLatestMinLabel: '最小消息数≥:',
+        dashLatest: '角色最新',
+        previewMetaStatusLatest: '角色最新记录',
         footerStat: '已选 <b style="color:var(--cmp-accent);">{sel}</b>/{selectable} 可选项 (<b>{size}</b>){extra}',
         footerExtraRisk: ' <span style="color:#fca5a5 !important; font-weight:600;">[含慎删 {n} 项]</span>',
         footerExtraExempt: ' <span style="opacity:0.75;">[已豁免 {n} 项]</span>',
@@ -259,6 +268,13 @@ const I18N = {
         tipCheckpoint: 'Identified as a branch/checkpoint. Skipped by Select All; check manually to clean.',
         tagParentChat: 'Parent Chat ({n} branches)',
         tipParentChat: 'Has {n} dependent child branch(es)/checkpoint(s). Skipped by Select All.',
+        tagLatestChat: 'Latest Chat',
+        tipLatestChat: 'Most recent chat for this character with ≥{min} messages. Skipped by 1st Select All; click again or check manually to clean.',
+        setLatestProtTitle: 'Protect Latest Chat per Character (Anti-Progress Loss)',
+        setLatestProtDesc: "Flags each character's most recent chat (with msgs ≥ threshold) as High-Risk so 1st Select All skips it. Set threshold to 1 to also protect 1-msg greetings.",
+        setLatestMinLabel: 'Min Msgs≥:',
+        dashLatest: 'Latest chat',
+        previewMetaStatusLatest: 'Latest chat for character',
         footerStat: 'Selected <b style="color:var(--cmp-accent);">{sel}</b>/{selectable} selectable (<b>{size}</b>){extra}',
         footerExtraRisk: ' <span style="color:#fca5a5 !important; font-weight:600;">[{n} High-Risk]</span>',
         footerExtraExempt: ' <span style="opacity:0.75;">[{n} Exempt]</span>',
@@ -352,6 +368,8 @@ function sanitizeSettings(rawObj) {
     merged.largeZombieWarn = Boolean(merged.largeZombieWarn);
     merged.largeZombieSizeKB = Math.min(10240, Math.max(5, Number(merged.largeZombieSizeKB) || 15));
     merged.protectBranches = merged.protectBranches !== undefined ? Boolean(merged.protectBranches) : true;
+    merged.protectLatestChat = merged.protectLatestChat !== undefined ? Boolean(merged.protectLatestChat) : true;
+    merged.latestChatMinMsgs = Math.min(10000, Math.max(1, Number(merged.latestChatMinMsgs) || 2));
     return merged;
 }
 
@@ -369,6 +387,7 @@ const State = {
     allRecords: [],
     filteredRecords: [],
     parentBranchCounts: new Map(),
+    latestRecordIds: new Set(),
     selectedIds: new Set(),
     manualHighRiskIds: new Set(),
     trashMetaList: [],
@@ -776,6 +795,62 @@ function rebuildParentBranchIndex(records) {
     State.parentBranchCounts = map;
 }
 
+// 构建每个角色卡下的最新聊天记录索引（结合最后对话时间戳与角色卡当前绑定 chat 字段）
+function rebuildLatestChatIndex(records) {
+    const latestSet = new Set();
+    const byAvatar = new Map();
+
+    for (const r of records) {
+        if (!r.avatarFile) continue;
+        if (!byAvatar.has(r.avatarFile)) {
+            byAvatar.set(r.avatarFile, []);
+        }
+        byAvatar.get(r.avatarFile).push(r);
+    }
+
+    const charActiveChatMap = new Map();
+    if (Array.isArray(characters)) {
+        for (const c of characters) {
+            if (c && c.avatar && c.chat) {
+                charActiveChatMap.set(c.avatar, String(c.chat).replace(/\.jsonl$/i, '').trim());
+            }
+        }
+    }
+
+    for (const [avatar, list] of byAvatar.entries()) {
+        if (list.length === 0) continue;
+        const boundChat = charActiveChatMap.get(avatar);
+
+        // 挑选时间戳最大的记录；若时间戳相同，优先匹配角色卡当前绑定的 chat，其次按消息数和体积排序
+        let best = list[0];
+        for (let i = 1; i < list.length; i++) {
+            const cur = list[i];
+            const tCur = cur.lastTime || 0;
+            const tBest = best.lastTime || 0;
+            if (tCur > tBest) {
+                best = cur;
+            } else if (tCur === tBest) {
+                if (boundChat && cur.chatFile === boundChat && best.chatFile !== boundChat) {
+                    best = cur;
+                } else if (cur.msgCount > best.msgCount || (cur.msgCount === best.msgCount && cur.sizeKB > best.sizeKB)) {
+                    best = cur;
+                }
+            }
+        }
+        if (best && best.id) {
+            latestSet.add(best.id);
+        }
+        // 如果酒馆角色对象明确绑定了某个 chat 文件（用户上次离开该角色时停留的对话），也一并纳入最新记录候选
+        if (boundChat) {
+            const boundRec = list.find((r) => r.chatFile === boundChat);
+            if (boundRec && boundRec.id) {
+                latestSet.add(boundRec.id);
+            }
+        }
+    }
+    State.latestRecordIds = latestSet;
+}
+
 function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, infoObj) {
     try {
         // 1. 当前正在前台打开的活跃聊天（强制豁免）
@@ -854,6 +929,20 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
                 tip: t('tipCheckpoint')
             };
         }
+
+        // 6. 检查是否为该角色卡下的最新聊天记录（且消息数 ≥ 设定阈值）
+        const latestProtEnabled = State.settings.protectLatestChat;
+        const latestMinMsgs = Math.max(1, Number(State.settings.latestChatMinMsgs) || 2);
+        const recId = `${avatarFile}::${cleanFile}`;
+        if (State.latestRecordIds.has(recId) && msgCount >= latestMinMsgs) {
+            return {
+                exempt: false,
+                highRisk: latestProtEnabled,
+                reason: 'latest_chat',
+                label: t('tagLatestChat'),
+                tip: t('tipLatestChat', { min: latestMinMsgs })
+            };
+        }
     } catch (e) {
         console.warn('[ChatCleaner] Protection eval error:', e);
     }
@@ -863,6 +952,7 @@ function evaluateProtection(avatarFile, cleanFile, rawFile, msgCount, sizeKB, in
 
 function refreshAllRecordsProtection() {
     rebuildParentBranchIndex(State.allRecords);
+    rebuildLatestChatIndex(State.allRecords);
     for (const r of State.allRecords) {
         const prot = evaluateProtection(r.avatarFile, r.chatFile, r.rawFileName, r.msgCount, r.sizeKB, {
             main_chat: r.parentChat
@@ -1194,8 +1284,9 @@ function applyFiltersAndRender(resetSelection = false) {
     State.filteredRecords = State.allRecords.filter((r) => {
         if (State.selectedAvatar && r.avatarFile !== State.selectedAvatar) return false;
         if (State.statusFilter) {
-            if (State.statusFilter === 'checkpoint' && r.reason !== 'checkpoint') return false;
+            if (State.statusFilter === 'checkpoint' && r.reason !== 'checkpoint' && r.reason !== 'parent_chat') return false;
             if (State.statusFilter === 'corrupted_large' && r.reason !== 'corrupted_large') return false;
+            if (State.statusFilter === 'latest_chat' && r.reason !== 'latest_chat') return false;
             if (State.statusFilter === 'backup' && r.reason !== 'backup') return false;
         }
         if (kw && !r.charName.toLowerCase().includes(kw) && !r.chatFile.toLowerCase().includes(kw)) {
@@ -1275,12 +1366,14 @@ function computeDashboardStats() {
     let zombieCount = 0;
     let branchCount = 0;
     let corruptCount = 0;
+    let latestCount = 0;
     const avatarSet = new Set();
     for (const r of records) {
         totalKB += r.sizeKB || 0;
         if (r.msgCount <= 1) zombieCount++;
-        if (r.reason === 'checkpoint') branchCount++;
+        if (r.reason === 'checkpoint' || r.reason === 'parent_chat') branchCount++;
         if (r.reason === 'corrupted_large') corruptCount++;
+        if (r.reason === 'latest_chat') latestCount++;
         if (r.avatarFile) avatarSet.add(r.avatarFile);
     }
     let trashKB = 0;
@@ -1292,6 +1385,7 @@ function computeDashboardStats() {
         zombieCount,
         branchCount,
         corruptCount,
+        latestCount,
         trashCount: State.trashMetaList.length,
         trashKB
     };
@@ -1336,6 +1430,7 @@ function renderDashboard() {
             ${clearXHtml}
         </button>
         <div class="${cls('zombie')}" data-dash="zombie"><span class="cmp-dash-label">${escapeHtml(t('dashZombie'))}</span><span class="cmp-dash-value">${s.zombieCount}</span></div>
+        <div class="${cls('latest')}" data-dash="latest"><span class="cmp-dash-label">${escapeHtml(t('dashLatest'))}</span><span class="cmp-dash-value">${s.latestCount}</span></div>
         <div class="${cls('checkpoint')}" data-dash="checkpoint"><span class="cmp-dash-label">${escapeHtml(t('dashBranch'))}</span><span class="cmp-dash-value">${s.branchCount}</span></div>
         <div class="${cls('corrupt')}" data-dash="corrupt"><span class="cmp-dash-label">${escapeHtml(t('dashCorrupt'))}</span><span class="cmp-dash-value">${s.corruptCount}</span></div>
         ${showTrashBtn ? `<div class="cmp-dash-item" data-dash="trash"><span class="cmp-dash-label">${escapeHtml(t('dashTrash'))}</span><span class="cmp-dash-value">${s.trashCount} <span style="opacity:0.7;font-weight:400;">(${formatSize(s.trashKB)})</span></span></div>` : ''}
@@ -1451,6 +1546,8 @@ function activateDashboardFilter(key) {
 
     if (key === 'zombie') {
         $('#cmp-max-msg').val(1);
+    } else if (key === 'latest') {
+        State.statusFilter = 'latest_chat';
     } else if (key === 'checkpoint') {
         State.statusFilter = 'checkpoint';
     } else if (key === 'corrupt') {
@@ -1490,6 +1587,7 @@ function renderManagerTable() {
             let tagClass = 'cmp-tag-warn';
             if (r.exempt) tagClass = 'cmp-tag-exempt';
             else if (r.reason === 'corrupted_large' || r.reason === 'backup') tagClass = 'cmp-tag-danger';
+            else if (r.reason === 'latest_chat') tagClass = 'cmp-tag-latest';
             protTagHtml = `<span class="cmp-tag ${tagClass}" title="${escapeHtml(r.tip)}">${escapeHtml(r.label)}</span> `;
         }
 
@@ -1750,6 +1848,7 @@ async function openLightweightPreview(recordId) {
             const statusText = rec.exempt ? t('previewMetaStatusActive')
                 : rec.reason === 'parent_chat' ? t('previewMetaStatusParent', { n: branchCount })
                 : rec.reason === 'checkpoint' ? t('previewMetaStatusCheckpoint')
+                : rec.reason === 'latest_chat' ? t('previewMetaStatusLatest')
                 : rec.reason === 'backup' ? t('previewMetaStatusBackup')
                 : rec.reason === 'corrupted_large' ? t('previewMetaStatusCorrupt')
                 : t('previewMetaStatusNormal');
@@ -1912,6 +2011,7 @@ function confirmAndDelete() {
     const corruptedLargeItems = targets.filter((r) => r.reason === 'corrupted_large');
     const backupItems = targets.filter((r) => r.reason === 'backup');
     const branchOrParentItems = targets.filter((r) => r.reason === 'checkpoint' || r.reason === 'parent_chat');
+    const latestChatItems = targets.filter((r) => r.reason === 'latest_chat');
 
     let warningBoxesHtml = '';
 
@@ -1949,6 +2049,17 @@ function confirmAndDelete() {
         `;
     }
 
+    if (latestChatItems.length > 0) {
+        const sampleLatest = latestChatItems.slice(0, 3).map((r) => `${escapeHtml(r.charName)} (${r.msgCount}${t('unitItems')})`).join(', ');
+        warningBoxesHtml += `
+            <div style="padding:8px; margin-bottom:6px; background:rgba(139,92,246,0.18); border:1px solid #8b5cf6; border-radius:6px; color:#c4b5fd !important;">
+                ⏳ ${isEn()
+                    ? `Latest Chat Warning: Selection includes <b>${latestChatItems.length}</b> character's latest active chat(s) (e.g. ${sampleLatest}${latestChatItems.length > 3 ? '...' : ''}).`
+                    : `角色最新记录提醒：所选项中包含 <b>${latestChatItems.length}</b> 个角色卡的最新聊天记录（如：${sampleLatest}${latestChatItems.length > 3 ? ' 等' : ''}），请确认是否需要清理最新进度。`}
+            </div>
+        `;
+    }
+
     if (maxMsg > 1) {
         warningBoxesHtml += `
             <div style="padding:8px; margin-bottom:6px; background:rgba(59,130,246,0.16); border:1px solid #3b82f6; border-radius:6px; color:#93c5fd !important;">
@@ -1959,7 +2070,7 @@ function confirmAndDelete() {
         `;
     }
 
-    const isHighRiskConfirm = corruptedLargeItems.length > 0 || backupItems.length > 0 || branchOrParentItems.length > 0;
+    const isHighRiskConfirm = corruptedLargeItems.length > 0 || backupItems.length > 0 || branchOrParentItems.length > 0 || latestChatItems.length > 0;
     const confirmBtnText = isEn()
         ? (isHighRiskConfirm ? `Force Clean (${targets.length})` : `Confirm Clean (${targets.length})`)
         : (isHighRiskConfirm ? `已知晓风险，强制清理 (${targets.length} 项)` : `确认清理 (${targets.length} 项)`);
@@ -2557,6 +2668,7 @@ function openHelpModal() {
                 <li><b>SillyTavern Native Backups Untouched</b>: ST 1.17+ automatic crash backups in <code>backups/</code> are never touched by this extension.</li>
                 <li><b>Large-Size Few-Messages Warning (Configurable)</b>: Files with ≤2 msgs but size ≥ threshold (default 15KB) are flagged as <b>Large File / Few Msgs</b>. "Select Normal" and presets skip them automatically.</li>
                 <li><b>Branch, Checkpoint & Parent Protection</b>: Automatically builds a parent-child dependency index. Both branches and parent chats with dependent checkpoints are skipped by "Select Normal".</li>
+                <li><b>Latest Chat per Character Protection (Configurable Min Messages)</b>: Automatically identifies the most recent chat for each character with messages ≥ threshold (default ≥2) and flags it as <b>Latest Chat</b> so 1st Select All skips it.</li>
                 <li><b>Active Chat Protection</b>: The currently open chat is marked <b>Active Chat</b> and locked until you switch chats.</li>
             </ul>
             <h4>2. How It Works</h4>
@@ -2572,6 +2684,7 @@ function openHelpModal() {
                 <li><b>酒馆原生备份不受影响</b>：SillyTavern 1.17+ 的防崩溃自动备份存放在独立的 <code>backups/</code> 目录下，本插件不会触碰该目录。</li>
                 <li><b>异常大体积少消息警告（可配置/可强制清理）</b>：当文件消息数 ≤2 条但体积达到设定阈值（默认 ≥15KB）时，可能是酒馆崩溃造成的坏档或含巨型世界书设定。插件会将其标为<b>大体积少消息(慎删)</b>，「全选普通项」与「预设按钮」会自动跳过它们。</li>
                 <li><b>分支、书签与父级主干保护</b>：自动构建父子分支反向索引，分支节点及含有子分支的主干聊天默认跳过全选，防止误删主干导致分支断链。</li>
+                <li><b>各角色卡最新聊天记录保护（可自定义最小消息数阈值）</b>：自动识别每张角色卡下最后互动时间最新（或酒馆当前绑定）且消息数达到设定阈值（默认 ≥2 条）的记录，标为<b>角色最新记录</b>，首次点击全选或快捷预设时自动跳过，防止清理短档时误删最新剧情进度。</li>
                 <li><b>当前活跃对话保护</b>：当前正在前台打开的聊天标为<b>当前打开</b>，需先在酒馆切换到其他聊天后方可清理。</li>
             </ul>
             <h4>二、 实现原理与时间读取说明</h4>
@@ -2688,6 +2801,9 @@ function applyLanguageToDOM() {
     $('#cmp-set-large-kb-lbl').text(t('setLargeKBLabel'));
     $('#cmp-set-branch-title').text(t('setBranchProtTitle'));
     $('#cmp-set-branch-desc').text(t('setBranchProtDesc'));
+    $('#cmp-set-latest-title').text(t('setLatestProtTitle'));
+    $('#cmp-set-latest-desc').text(t('setLatestProtDesc'));
+    $('#cmp-set-latest-min-lbl').text(t('setLatestMinLabel'));
     $('#cmp-set-verify-title').text(t('setVerifyTitle'));
     $('#cmp-set-verify-desc').text(t('setVerifyDesc'));
     $('#cmp-set-backup-title').text(t('setBackupTitle'));
@@ -2969,6 +3085,18 @@ async function openManagerModal() {
 
                                 <div class="cmp-setting-card">
                                     <div>
+                                        <div id="cmp-set-latest-title" class="cmp-setting-title"></div>
+                                        <div id="cmp-set-latest-desc" class="cmp-setting-desc"></div>
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                        <span id="cmp-set-latest-min-lbl" style="font-size:0.84em; color:var(--cmp-text-sub);"></span>
+                                        <input type="number" id="cmp-set-latest-min" class="cmp-input cmp-input-num" min="1" max="10000" value="2">
+                                        <input type="checkbox" id="cmp-set-latest-prot" checked>
+                                    </div>
+                                </div>
+
+                                <div class="cmp-setting-card">
+                                    <div>
                                         <div id="cmp-set-verify-title" class="cmp-setting-title"></div>
                                         <div id="cmp-set-verify-desc" class="cmp-setting-desc"></div>
                                     </div>
@@ -3035,6 +3163,8 @@ function syncSettingsToInputs() {
     $('#cmp-set-large-warn').prop('checked', State.settings.largeZombieWarn);
     $('#cmp-set-large-kb').val(State.settings.largeZombieSizeKB);
     $('#cmp-set-branch-prot').prop('checked', State.settings.protectBranches);
+    $('#cmp-set-latest-prot').prop('checked', State.settings.protectLatestChat);
+    $('#cmp-set-latest-min').val(State.settings.latestChatMinMsgs);
     $('#cmp-set-verify').prop('checked', State.settings.verifyBeforeDelete);
     $('#cmp-set-backup').prop('checked', State.settings.safeBackupMode);
     $('#cmp-set-retention-mins').val(State.settings.trashRetentionMins);
@@ -3375,6 +3505,16 @@ function bindModalEvents() {
     });
     $('#cmp-set-branch-prot').on('change', function () {
         saveSettings({ ...State.settings, protectBranches: this.checked });
+        applyFiltersAndRender(false);
+    });
+    $('#cmp-set-latest-prot').on('change', function () {
+        saveSettings({ ...State.settings, protectLatestChat: this.checked });
+        applyFiltersAndRender(false);
+    });
+    $('#cmp-set-latest-min').on('change', function () {
+        const v = Math.min(10000, Math.max(1, Number($(this).val()) || 2));
+        $(this).val(v);
+        saveSettings({ ...State.settings, latestChatMinMsgs: v });
         applyFiltersAndRender(false);
     });
 

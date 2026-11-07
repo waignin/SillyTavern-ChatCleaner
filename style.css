@@ -459,6 +459,12 @@
     border: 1px solid rgba(245, 158, 11, 0.45);
 }
 
+.cmp-tag-latest {
+    background: rgba(139, 92, 246, 0.22);
+    color: #c4b5fd !important;
+    border: 1px solid rgba(139, 92, 246, 0.48);
+}
+
 .cmp-tag-danger {
     background: rgba(239, 68, 68, 0.22);
     color: #fca5a5 !important;
